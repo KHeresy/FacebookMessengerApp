@@ -1,0 +1,29 @@
+{
+  "name": "fbm",
+  "version": "1.0.0",
+  "description": "Facebook Messenger desktop app",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^39.2.2",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.electron.fbmessenger",
+    "productName": "Facebook Messenger",
+    "publish": null,
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "portable",
+      "icon": "icon.ico"
+    }
+  }
+}
