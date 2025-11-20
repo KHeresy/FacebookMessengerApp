@@ -30,7 +30,7 @@ jobs:
         run: |
           $file = Get-ChildItem -Path dist -Filter "*.exe" | Select-Object -First 1
           if ($file) {
-            Rename-Item -Path $file.FullName -NewName "dist/Facebook Messenger.exe"
+            Rename-Item -Path $file.FullName -NewName "Facebook Messenger.exe"
           } else {
             Write-Error "No executable found in dist directory."
             exit 1
