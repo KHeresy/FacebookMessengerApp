@@ -1,10 +1,12 @@
-const { app, BrowserWindow, shell, Menu, session } = require('electron');
+const { app, BrowserWindow, shell, Menu, session, Notification } = require('electron');
 const path = require('path');
 const windowStateKeeper = require('electron-window-state');
 
-if (process.platform === 'win32' && !app.isPackaged) {
+if (process.platform === 'win32' && app.isPackaged) {
   app.setAppUserModelId('com.electron.fbmessenger');
 }
+
+let notificationsEnabled = true;
 
 function createWindow() {
   // Load the previous state with fallback to defaults
@@ -22,6 +24,22 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+    }
+  });
+  
+  // Spoof User Agent to look like regular Chrome
+  mainWindow.webContents.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  // Monitor Title Changes for Notifications
+  mainWindow.on('page-title-updated', (event, title) => {
+    // If the window is focused, we assume the user sees the message, so no notification.
+    // If the title is generic 'Messenger', ignore it.
+    if (notificationsEnabled && !mainWindow.isFocused() && title !== 'Messenger') {
+      new Notification({
+        title: 'New Message',
+        body: title, // The title usually contains "User sent a message"
+        silent: false
+      }).show();
     }
   });
 
@@ -76,7 +94,16 @@ app.whenReady().then(() => {
         { role: 'zoomIn' },
         { role: 'zoomOut' },
         { type: 'separator' },
-        { role: 'togglefullscreen' }
+        { role: 'togglefullscreen' },
+        { type: 'separator' },
+        {
+          label: 'Enable Background Notifications',
+          type: 'checkbox',
+          checked: true,
+          click: (menuItem) => {
+            notificationsEnabled = menuItem.checked;
+          }
+        }
       ]
     }
   ];
@@ -86,6 +113,7 @@ app.whenReady().then(() => {
 
   // Handle permission requests (e.g. for notifications)
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    console.log(`Permission requested: ${permission}`); // Debug log
     if (permission === 'notifications') {
       callback(true);
     } else {
