@@ -30,17 +30,37 @@ function createWindow() {
   // Spoof User Agent to look like regular Chrome
   mainWindow.webContents.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
+  let lastNotifiedTitle = '';
+
   // Monitor Title Changes for Notifications
   mainWindow.on('page-title-updated', (event, title) => {
+    // Messenger titles often cycle between "(1) User" and "Message Text".
+    // We ignore the ones starting with a count (e.g. "(1)") so they don't reset our duplicate check
+    // or trigger unwanted notifications.
+    if (/^\(\d+\)/.test(title)) {
+      return;
+    }
+
     // If the window is focused, we assume the user sees the message, so no notification.
     // If the title is generic 'Messenger', ignore it.
     if (notificationsEnabled && !mainWindow.isFocused() && title !== 'Messenger') {
+      // Prevent duplicate notifications for the exact same title text
+      if (title === lastNotifiedTitle) {
+        return;
+      }
+      lastNotifiedTitle = title;
+
       new Notification({
         title: 'New Message',
         body: title, // The title usually contains "User sent a message"
         silent: false
       }).show();
     }
+  });
+
+  // Reset the last notified title when user focuses the window
+  mainWindow.on('focus', () => {
+    lastNotifiedTitle = '';
   });
 
   // Let us register listeners on the window, so we can update the state
