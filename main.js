@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, Menu, session, Notification } = require('electron');
+const { app, BrowserWindow, shell, Menu, session, Notification, dialog } = require('electron');
 const path = require('path');
 const windowStateKeeper = require('electron-window-state');
 
@@ -71,16 +71,52 @@ function createWindow() {
   // Load the Facebook Messages URL.
   mainWindow.loadURL('https://www.messenger.com/');
 
-  // Open links externally
+  // Intercept in-page navigation (e.g. clicking links)
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const parsedUrl = new URL(url);
+    const hostname = parsedUrl.hostname;
+    const pathname = parsedUrl.pathname;
+
+    // Allow navigation strictly to messenger.com (but not subdomains like l.messenger.com)
+    if (hostname === 'www.messenger.com' || hostname === 'm.messenger.com') {
+      return;
+    }
+
+    // Allow navigation to facebook login/auth pages
+    // Common paths: /login.php, /vX.X/dialog/oauth, /checkpoint, etc.
+    if (hostname.endsWith('facebook.com') && 
+       (pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
+      return;
+    }
+
+    // For everything else (including l.facebook.com, generic facebook.com, and external sites),
+    // block navigation and open externally.
+    event.preventDefault();
+    shell.openExternal(url);
+  });
+
+  // Open links externally (handling target="_blank" / window.open)
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    // If the URL is part of Messenger or Facebook messages, open it in the main window
-    if (url.includes('messenger.com') || url.includes('facebook.com')) {
+    const parsedUrl = new URL(url);
+    const hostname = parsedUrl.hostname;
+    const pathname = parsedUrl.pathname;
+
+    // If it's a messenger.com link, keep it in the app (main window)
+    if (hostname === 'www.messenger.com' || hostname === 'm.messenger.com') {
       mainWindow.loadURL(url);
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
       return { action: 'deny' };
     }
 
+    // If it's a specific facebook auth link, allow it to open a popup window (standard behavior)
+    // We do NOT force the main window to navigate, preventing white-out on shims.
+    if (hostname.endsWith('facebook.com') && 
+       (pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
+      return { action: 'allow' };
+    }
+
+    // All other links (external sites, l.facebook.com redirects, etc.) -> Open in System Browser
     shell.openExternal(url);
     return { action: 'deny' };
   });
@@ -90,6 +126,43 @@ function createWindow() {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
+  const debugMenu = {
+    label: 'Debug',
+    submenu: [
+      {
+        label: 'Go Back',
+        accelerator: 'Alt+Left',
+        click: () => {
+          const win = BrowserWindow.getFocusedWindow();
+          if (win && win.webContents.canGoBack()) {
+            win.webContents.goBack();
+          }
+        }
+      },
+      {
+        label: 'Show Current URL',
+        click: () => {
+          const win = BrowserWindow.getFocusedWindow();
+          if (win) {
+            dialog.showMessageBox(win, {
+              type: 'info',
+              title: 'Current URL',
+              message: win.webContents.getURL(),
+              buttons: ['OK']
+            });
+          }
+        }
+      },
+      {
+        label: 'Open DevTools',
+        click: () => {
+           const win = BrowserWindow.getFocusedWindow();
+           if (win) win.webContents.openDevTools({ mode: 'detach' });
+        }
+      }
+    ]
+  };
+
   const template = [
     {
       label: 'Edit',
@@ -108,7 +181,6 @@ app.whenReady().then(() => {
       submenu: [
         { role: 'reload' },
         { role: 'forceReload' },
-        { role: 'toggleDevTools' },
         { type: 'separator' },
         { role: 'resetZoom' },
         { role: 'zoomIn' },
@@ -122,6 +194,23 @@ app.whenReady().then(() => {
           checked: true,
           click: (menuItem) => {
             notificationsEnabled = menuItem.checked;
+          }
+        }
+      ]
+    },
+    debugMenu,
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'About',
+          click: () => {
+            dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
+              type: 'info',
+              title: 'About',
+              message: `Facebook Messenger\nVersion: ${app.getVersion()}`,
+              buttons: ['OK']
+            });
           }
         }
       ]
