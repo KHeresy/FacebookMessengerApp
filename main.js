@@ -1,6 +1,10 @@
-const { app, BrowserWindow, shell, Menu, session, Notification, dialog } = require('electron');
+const { app, BrowserWindow, shell, Menu, session, Notification, dialog, nativeImage } = require('electron');
 const path = require('path');
 const windowStateKeeper = require('electron-window-state');
+
+// 16x16 Red Dot Base64 for Overlay
+const redDotBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAEUlEQVQ4T2P8z8AARA0DGQAAw0QD/eXb6HUAAAAASUVORK5CYII=';
+const overlayIcon = nativeImage.createFromDataURL(redDotBase64);
 
 if (process.platform === 'win32' && app.isPackaged) {
   app.setAppUserModelId('com.electron.fbmessenger');
@@ -78,12 +82,18 @@ if (!gotTheLock) {
         });
 
         notification.show();
+        
+        // Flash the frame and set overlay icon
+        mainWindow.flashFrame(true);
+        mainWindow.setOverlayIcon(overlayIcon, 'New Message');
       }
     });
 
     // Reset the last notified title when user focuses the window
     mainWindow.on('focus', () => {
       lastNotifiedTitle = '';
+      mainWindow.flashFrame(false);
+      mainWindow.setOverlayIcon(null, '');
     });
 
     // Let us register listeners on the window, so we can update the state
