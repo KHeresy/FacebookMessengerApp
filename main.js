@@ -57,6 +57,29 @@ if (!gotTheLock) {
     mainWindow.webContents.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
     let lastNotifiedTitle = '';
+    let lastNotificationTime = 0;
+    let notificationTimer = null;
+
+    const showNotification = (title) => {
+      lastNotifiedTitle = title;
+      lastNotificationTime = Date.now();
+
+      const notification = new Notification({
+        title: 'New Message',
+        body: title, // The title usually contains "User sent a message"
+        silent: false
+      });
+
+      notification.on('click', () => {
+        if (mainWindow) {
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.focus();
+        }
+      });
+
+      notification.show();
+      mainWindow.flashFrame(true);
+    };
 
     // Monitor Title Changes for Notifications
     mainWindow.on('page-title-updated', (event, title) => {
@@ -74,31 +97,35 @@ if (!gotTheLock) {
         if (title === lastNotifiedTitle) {
           return;
         }
-        lastNotifiedTitle = title;
-
-        const notification = new Notification({
-          title: 'New Message',
-          body: title, // The title usually contains "User sent a message"
-          silent: false
-        });
-
-        notification.on('click', () => {
-          if (mainWindow) {
-            if (mainWindow.isMinimized()) mainWindow.restore();
-            mainWindow.focus();
-          }
-        });
-
-        notification.show();
         
-        // Flash the frame
-        mainWindow.flashFrame(true);
+        const now = Date.now();
+        const COOLDOWN = 1000; // 3 seconds
+
+        if (now - lastNotificationTime >= COOLDOWN) {
+          if (notificationTimer) {
+            clearTimeout(notificationTimer);
+            notificationTimer = null;
+          }
+          showNotification(title);
+        } else {
+          if (notificationTimer) clearTimeout(notificationTimer);
+          
+          const remaining = COOLDOWN - (now - lastNotificationTime);
+          notificationTimer = setTimeout(() => {
+            showNotification(title);
+            notificationTimer = null;
+          }, remaining);
+        }
       }
     });
 
     // Reset the last notified title when user focuses the window
     mainWindow.on('focus', () => {
       lastNotifiedTitle = '';
+      if (notificationTimer) {
+        clearTimeout(notificationTimer);
+        notificationTimer = null;
+      }
       mainWindow.flashFrame(false);
     });
 
