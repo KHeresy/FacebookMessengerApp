@@ -1,4 +1,4 @@
-name: Build Windows App
+name: Build App
 
 on:
   push:
@@ -8,7 +8,10 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
 
     steps:
       - name: Checkout code
@@ -24,20 +27,19 @@ jobs:
 
       - name: Build application
         run: npm run build
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Rename artifact
-        shell: pwsh
-        run: |
-          $file = Get-ChildItem -Path dist -Filter "*.exe" | Select-Object -First 1
-          if ($file) {
-            Rename-Item -Path $file.FullName -NewName "Facebook Messenger.exe"
-          } else {
-            Write-Error "No executable found in dist directory."
-            exit 1
-          }
-
-      - name: Upload artifact
+      - name: Upload artifact (Windows)
+        if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: fbm-windows-portable
+          name: fbm-windows
           path: dist/Facebook Messenger.exe
+
+      - name: Upload artifact (macOS)
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fbm-macos
+          path: dist/*.dmg
