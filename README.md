@@ -6,7 +6,13 @@ Just pack https://www.messenger.com/ as an App with electron.
 
 ```
 npm install
-npm run build
+
+npm run build # for Windows
+npm run build -- --mac --dir # for MacOS
 ```
 
-Installer file: `dist\Facebook Messenger.exe`
+## Installers
+
+- Windows: Installer file: `dist\Facebook Messenger.exe`
+- MacOS: Installer file: `dist/mac-arm64/Facebook Messenger.app`
+
