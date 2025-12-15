@@ -1,2 +1,34 @@
+# General
+.DS_Store
+Thumbs.db
+*.swp
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Electron / Build Output
 /dist
-/node_modules
+/out
+/build
+*.dmg
+*.exe
+*.zip
+*.app
+
+# IDEs
+.idea/
+.vscode/
+*.jy
+*.yl
+
+# Local History (VS Code extension)
+.history/
