@@ -1,6 +1,6 @@
 {
 	"name": "fbm",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"description": "Facebook Messenger desktop app",
 	"main": "main.js",
 	"scripts": {

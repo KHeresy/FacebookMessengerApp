@@ -1,12 +1,8 @@
-const { app, BrowserWindow, shell, Menu, session, Notification, dialog, nativeImage } = require('electron');
+const { app, BrowserWindow, shell, Menu, session, Notification, dialog, nativeImage, ipcMain } = require('electron');
 const path = require('path');
 const windowStateKeeper = require('electron-window-state');
 
-// 16x16 Red Dot Base64 for Overlay
-const redDotBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAEUlEQVQ4T2P8z8AARA0DGQAAw0QD/eXb6HUAAAAASUVORK5CYII=';
-const overlayIcon = nativeImage.createFromDataURL(redDotBase64);
-
-if (process.platform === 'win32' && app.isPackaged) {
+if (process.platform === 'win32') {
   app.setAppUserModelId('com.electron.fbmessenger');
 }
 
@@ -26,6 +22,17 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.on('update-badge', (event, { dataUrl, text }) => {
+    if (mainWindow) {
+      if (dataUrl) {
+        const img = nativeImage.createFromDataURL(dataUrl);
+        mainWindow.setOverlayIcon(img, text);
+      } else {
+        mainWindow.setOverlayIcon(null, '');
+      }
+    }
+  });
+
   function createWindow() {
     // Load the previous state with fallback to defaults
     let mainWindowState = windowStateKeeper({
@@ -42,6 +49,7 @@ if (!gotTheLock) {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        preload: path.join(__dirname, 'preload.js')
       }
     });
     
@@ -83,9 +91,8 @@ if (!gotTheLock) {
 
         notification.show();
         
-        // Flash the frame and set overlay icon
+        // Flash the frame
         mainWindow.flashFrame(true);
-        mainWindow.setOverlayIcon(overlayIcon, 'New Message');
       }
     });
 
@@ -93,7 +100,6 @@ if (!gotTheLock) {
     mainWindow.on('focus', () => {
       lastNotifiedTitle = '';
       mainWindow.flashFrame(false);
-      mainWindow.setOverlayIcon(null, '');
     });
 
     // Let us register listeners on the window, so we can update the state
