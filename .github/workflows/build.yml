@@ -30,11 +30,23 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
+      - name: Rename artifact (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $file = Get-ChildItem -Path dist -Filter "*.exe" | Select-Object -First 1
+          if ($file) {
+            Rename-Item -Path $file.FullName -NewName "Facebook Messenger.exe"
+          } else {
+            Write-Error "No executable found in dist directory."
+            exit 1
+          }
+
       - name: Upload artifact (Windows)
         if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: fbm-windows
+          name: fbm-windows-portable
           path: dist/Facebook Messenger.exe
 
       - name: Upload artifact (macOS)
@@ -43,3 +55,28 @@ jobs:
         with:
           name: fbm-macos
           path: dist/*.dmg
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Get version
+        id: get_version
+        run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_ENV
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ env.VERSION }}
+          files: artifacts/**/*
