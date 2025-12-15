@@ -28,6 +28,10 @@
 			"target": "nsis",
 			"icon": "icon.ico",
 			"artifactName": "${productName}.${ext}"
+		},
+		"mac": {
+			"target": "dmg",
+			"icon": "icon.icns"
 		}
 	}
 }
