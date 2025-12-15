@@ -11,6 +11,6 @@ npm run build
 
 ## Installers
 
-Windows: Installer file: `dist\Facebook Messenger.exe`
-MacOS: Installer file: `dist\Facebook Messenger-1.0.5-arm64.dmg`
+- Windows: Installer file: `dist\Facebook Messenger.exe`
+- MacOS: Installer file: `dist\Facebook Messenger-1.0.5-arm64.dmg`
 
