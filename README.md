@@ -1,4 +1,4 @@
-# Facbook Messenger App
+# Facebook Messenger App
 
 Pack https://www.messenger.com/ as an App with electron.
 
