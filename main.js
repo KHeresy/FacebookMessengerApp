@@ -284,7 +284,7 @@ if (!gotTheLock) {
             dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
               type: 'info',
               title: 'About',
-              message: `Facebook Messenger\nVersion: ${app.getVersion()}`,
+              message: `Facebook Messenger\nVersion: ${app.getVersion()}\nElectron: ${process.versions.electron}\nChrome: ${process.versions.chrome}`,
               buttons: ['OK']
             });
           }
