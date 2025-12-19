@@ -54,6 +54,25 @@ function updateBadge() {
     }
 }
 
+let lastRightClickElement = null;
+
+window.addEventListener('contextmenu', (e) => {
+    lastRightClickElement = e.target;
+});
+
+ipcRenderer.on('select-all-message', () => {
+    if (lastRightClickElement) {
+        // Create a range to select the contents of the element
+        const range = document.createRange();
+        range.selectNodeContents(lastRightClickElement);
+        
+        // Update the current selection
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+});
+
 window.addEventListener('DOMContentLoaded', () => {
     // Initial check
     updateBadge();

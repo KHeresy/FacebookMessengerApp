@@ -1,6 +1,8 @@
 const { app, BrowserWindow, shell, Menu, session, Notification, dialog, nativeImage, ipcMain } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const windowStateKeeper = require('electron-window-state');
+const translations = require('./translations');
 
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.electron.fbmessenger');
@@ -8,6 +10,36 @@ if (process.platform === 'win32') {
 
 let notificationsEnabled = true;
 let mainWindow;
+let currentLang = 'zh-TW'; // Default language
+
+// Config persistence
+const configPath = path.join(app.getPath('userData'), 'config.json');
+
+function loadConfig() {
+  try {
+    if (fs.existsSync(configPath)) {
+      const data = fs.readFileSync(configPath, 'utf8');
+      const config = JSON.parse(data);
+      if (config.language) {
+        currentLang = config.language;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load config:', e);
+  }
+}
+
+function saveConfig() {
+  try {
+    const config = { language: currentLang };
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  } catch (e) {
+    console.error('Failed to save config:', e);
+  }
+}
+
+// Load config initially
+loadConfig();
 
 const gotTheLock = app.requestSingleInstanceLock();
 
@@ -32,6 +64,135 @@ if (!gotTheLock) {
       }
     }
   });
+
+  // Helper to get text based on current language
+  function t(key) {
+    return translations[currentLang][key] || key;
+  }
+
+  function updateApplicationMenu() {
+    const debugMenu = {
+      label: t('debug'),
+      submenu: [
+        {
+          label: t('goBack'),
+          accelerator: 'Alt+Left',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow();
+            if (win && win.webContents.canGoBack()) {
+              win.webContents.goBack();
+            }
+          }
+        },
+        {
+          label: t('showCurrentUrl'),
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow();
+            if (win) {
+              dialog.showMessageBox(win, {
+                type: 'info',
+                title: t('showCurrentUrl'),
+                message: win.webContents.getURL(),
+                buttons: ['OK']
+              });
+            }
+          }
+        },
+        {
+          label: t('openDevTools'),
+          click: () => {
+             const win = BrowserWindow.getFocusedWindow();
+             if (win) win.webContents.openDevTools({ mode: 'detach' });
+          }
+        }
+      ]
+    };
+
+    const template = [
+      {
+        label: t('view'),
+        submenu: [
+          { label: t('reload'), role: 'reload' },
+          { label: t('forceReload'), role: 'forceReload' },
+          { type: 'separator' },
+          { label: t('resetZoom'), role: 'resetZoom' },
+          { label: t('zoomIn'), role: 'zoomIn' },
+          { label: t('zoomOut'), role: 'zoomOut' },
+          { type: 'separator' },
+          { label: t('toggleFullscreen'), role: 'togglefullscreen' },
+          { type: 'separator' },
+          {
+            label: t('enableNotifications'),
+            type: 'checkbox',
+            checked: notificationsEnabled,
+            click: (menuItem) => {
+              notificationsEnabled = menuItem.checked;
+            }
+          },
+          {
+            label: t('launchAtStartup'),
+            type: 'checkbox',
+            checked: app.getLoginItemSettings().openAtLogin,
+            click: (menuItem) => {
+              app.setLoginItemSettings({
+                openAtLogin: menuItem.checked
+              });
+            }
+          },
+          { type: 'separator' },
+          {
+            label: t('language'),
+            submenu: [
+              {
+                label: 'English',
+                type: 'radio',
+                checked: currentLang === 'en',
+                click: () => {
+                  if (currentLang !== 'en') {
+                    currentLang = 'en';
+                    saveConfig();
+                    updateApplicationMenu();
+                  }
+                }
+              },
+              {
+                label: '繁體中文',
+                type: 'radio',
+                checked: currentLang === 'zh-TW',
+                click: () => {
+                  if (currentLang !== 'zh-TW') {
+                    currentLang = 'zh-TW';
+                    saveConfig();
+                    updateApplicationMenu();
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      debugMenu,
+      {
+        label: t('help'),
+        submenu: [
+          {
+            label: t('about'),
+            click: () => {
+              dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
+                type: 'info',
+                title: t('about'),
+                message: `Facebook Messenger\nVersion: ${app.getVersion()}\nElectron: ${process.versions.electron}\nChrome: ${process.versions.chrome}`,
+                buttons: ['OK']
+              });
+            }
+          }
+        ]
+      }
+    ];
+
+    const menu = Menu.buildFromTemplate(template);
+    Menu.setApplicationMenu(menu);
+  }
 
   function createWindow() {
     // Load the previous state with fallback to defaults
@@ -137,6 +298,44 @@ if (!gotTheLock) {
     // Load the Facebook Messages URL.
     mainWindow.loadURL('https://www.messenger.com/');
 
+    // Context Menu
+    mainWindow.webContents.on('context-menu', (event, params) => {
+      const menuTemplate = [
+        {
+          label: t('selectAllSingleMessage'), // Select All Single Message
+          click: () => {
+            mainWindow.webContents.send('select-all-message');
+          }
+        },
+        { type: 'separator' },
+        { label: t('copy'), role: 'copy' }, // Copy
+        { label: t('paste'), role: 'paste' }  // Paste
+      ];
+
+      if (params.mediaType === 'image') {
+        menuTemplate.push({ type: 'separator' });
+        menuTemplate.push({
+          label: t('copyImage'), // Copy Image
+          click: () => {
+            mainWindow.webContents.copyImageAt(params.x, params.y);
+          }
+        });
+      }
+
+      if (params.linkURL) {
+        menuTemplate.push({ type: 'separator' });
+        menuTemplate.push({
+          label: t('openInBrowser'), // Open in Browser
+          click: () => {
+            shell.openExternal(params.linkURL);
+          }
+        });
+      }
+
+      const menu = Menu.buildFromTemplate(menuTemplate);
+      menu.popup(mainWindow);
+    });
+
     // Intercept in-page navigation (e.g. clicking links)
     mainWindow.webContents.on('will-navigate', (event, url) => {
       const parsedUrl = new URL(url);
@@ -192,110 +391,6 @@ if (!gotTheLock) {
   // initialization and is ready to create browser windows.
   // Some APIs can only be used after this event occurs.
   app.whenReady().then(() => {
-  const debugMenu = {
-    label: 'Debug',
-    submenu: [
-      {
-        label: 'Go Back',
-        accelerator: 'Alt+Left',
-        click: () => {
-          const win = BrowserWindow.getFocusedWindow();
-          if (win && win.webContents.canGoBack()) {
-            win.webContents.goBack();
-          }
-        }
-      },
-      {
-        label: 'Show Current URL',
-        click: () => {
-          const win = BrowserWindow.getFocusedWindow();
-          if (win) {
-            dialog.showMessageBox(win, {
-              type: 'info',
-              title: 'Current URL',
-              message: win.webContents.getURL(),
-              buttons: ['OK']
-            });
-          }
-        }
-      },
-      {
-        label: 'Open DevTools',
-        click: () => {
-           const win = BrowserWindow.getFocusedWindow();
-           if (win) win.webContents.openDevTools({ mode: 'detach' });
-        }
-      }
-    ]
-  };
-
-  const template = [
-    {
-      label: 'Edit',
-      submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' }
-      ]
-    },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
-        { type: 'separator' },
-        {
-          label: 'Enable Background Notifications',
-          type: 'checkbox',
-          checked: true,
-          click: (menuItem) => {
-            notificationsEnabled = menuItem.checked;
-          }
-        },
-        {
-          label: 'Launch at Startup',
-          type: 'checkbox',
-          checked: app.getLoginItemSettings().openAtLogin,
-          click: (menuItem) => {
-            app.setLoginItemSettings({
-              openAtLogin: menuItem.checked
-            });
-          }
-        }
-      ]
-    },
-    debugMenu,
-    {
-      label: 'Help',
-      submenu: [
-        {
-          label: 'About',
-          click: () => {
-            dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
-              type: 'info',
-              title: 'About',
-              message: `Facebook Messenger\nVersion: ${app.getVersion()}\nElectron: ${process.versions.electron}\nChrome: ${process.versions.chrome}`,
-              buttons: ['OK']
-            });
-          }
-        }
-      ]
-    }
-  ];
-
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
-
   // Handle permission requests (e.g. for notifications)
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     console.log(`Permission requested: ${permission}`); // Debug log
@@ -306,6 +401,7 @@ if (!gotTheLock) {
     }
   });
 
+  updateApplicationMenu();
   createWindow();
 
   app.on('activate', function () {
