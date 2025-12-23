@@ -9,6 +9,7 @@ if (process.platform === 'win32') {
 }
 
 let notificationsEnabled = true;
+let checkForUpdates = true;
 let mainWindow;
 let currentLang = 'zh-TW'; // Default language
 
@@ -23,6 +24,9 @@ function loadConfig() {
       if (config.language) {
         currentLang = config.language;
       }
+      if (config.checkForUpdates !== undefined) {
+        checkForUpdates = config.checkForUpdates;
+      }
     }
   } catch (e) {
     console.error('Failed to load config:', e);
@@ -31,7 +35,7 @@ function loadConfig() {
 
 function saveConfig() {
   try {
-    const config = { language: currentLang };
+    const config = { language: currentLang, checkForUpdates };
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
   } catch (e) {
     console.error('Failed to save config:', e);
@@ -68,6 +72,61 @@ if (!gotTheLock) {
   // Helper to get text based on current language
   function t(key) {
     return translations[currentLang][key] || key;
+  }
+
+  async function checkUpdate(manual = false) {
+    if (!checkForUpdates && !manual) return;
+
+    try {
+      const response = await fetch('https://api.github.com/repos/KHeresy/FacebookMessengerApp/releases/latest');
+      if (!response.ok) return;
+      const data = await response.json();
+      const latestVersion = data.tag_name.replace(/^v/, '');
+      const currentVersion = app.getVersion();
+
+      // Split by dot or hyphen to handle 1.0.7-20251223 vs 1.0.7
+      const v1 = currentVersion.split(/[.-]/).map(Number);
+      const v2 = latestVersion.split(/[.-]/).map(Number);
+      
+      let hasUpdate = false;
+      const len = Math.max(v1.length, v2.length);
+      for (let i = 0; i < len; i++) {
+        const a = v1[i] || 0;
+        const b = v2[i] || 0;
+        if (a < b) {
+          hasUpdate = true;
+          break;
+        }
+        if (a > b) break;
+      }
+
+      if (hasUpdate) {
+        const { response: btnIndex } = await dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
+          type: 'info',
+          title: t('updateAvailable'),
+          message: t('updateMessage').replace('{version}', latestVersion),
+          buttons: [t('download'), t('later')],
+          defaultId: 0,
+          cancelId: 1
+        });
+
+        if (btnIndex === 0) {
+          shell.openExternal(data.html_url);
+        }
+      } else if (manual) {
+         dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
+          type: 'info',
+          title: t('noUpdateAvailable'),
+          message: t('latestVersionMessage'),
+          buttons: ['OK']
+        });
+      }
+    } catch (err) {
+      console.error('Update check failed:', err);
+      if (manual) {
+        dialog.showErrorBox('Update Check Failed', err.message);
+      }
+    }
   }
 
   function updateApplicationMenu() {
@@ -176,14 +235,36 @@ if (!gotTheLock) {
         label: t('help'),
         submenu: [
           {
-            label: t('about'),
+            label: t('checkUpdateNow'),
             click: () => {
-              dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
+              checkUpdate(true);
+            }
+          },
+          {
+            label: t('autoCheckUpdates'),
+            type: 'checkbox',
+            checked: checkForUpdates,
+            click: (menuItem) => {
+              checkForUpdates = menuItem.checked;
+              saveConfig();
+            }
+          },
+          { type: 'separator' },
+          {
+            label: t('about'),
+            click: async () => {
+              const { response } = await dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
                 type: 'info',
                 title: t('about'),
                 message: `Facebook Messenger\nVersion: ${app.getVersion()}\nElectron: ${process.versions.electron}\nChrome: ${process.versions.chrome}`,
-                buttons: ['OK']
+                buttons: ['OK', t('github')],
+                defaultId: 0,
+                cancelId: 0
               });
+
+              if (response === 1) {
+                shell.openExternal('https://github.com/KHeresy/FacebookMessengerApp');
+              }
             }
           }
         ]
@@ -403,6 +484,12 @@ if (!gotTheLock) {
 
   updateApplicationMenu();
   createWindow();
+
+  // Check for updates
+  checkUpdate();
+  setInterval(() => {
+    checkUpdate();
+  }, 4 * 60 * 60 * 1000); // Check every 4 hours
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the

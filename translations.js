@@ -25,7 +25,16 @@ module.exports = {
     selectAllSingleMessage: 'Select All Single Message',
     openInBrowser: 'Open in Browser',
     copyImage: 'Copy Image',
-    language: 'Language'
+    language: 'Language',
+    github: 'GitHub Repository',
+    autoCheckUpdates: 'Auto Check for Updates',
+    checkUpdateNow: 'Check for Updates...',
+    noUpdateAvailable: 'No Update Available',
+    latestVersionMessage: 'You are using the latest version.',
+    updateAvailable: 'Update Available',
+    updateMessage: 'A new version {version} is available. Do you want to download it now?',
+    download: 'Download',
+    later: 'Later'
   },
   'zh-TW': {
     edit: '編輯',
@@ -53,6 +62,15 @@ module.exports = {
     selectAllSingleMessage: '全選單一訊息',
     openInBrowser: '在瀏覽器開啟',
     copyImage: '複製圖片',
-    language: '語言'
+    language: '語言',
+    github: 'GitHub 專案頁面',
+    autoCheckUpdates: '自動檢查更新',
+    checkUpdateNow: '檢查更新...',
+    noUpdateAvailable: '沒有可用的更新',
+    latestVersionMessage: '您目前使用的是最新版本。',
+    updateAvailable: '有新版本可用',
+    updateMessage: '發現新版本 {version}。您想要現在下載嗎？',
+    download: '下載',
+    later: '稍後'
   }
 };

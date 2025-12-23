@@ -4,13 +4,72 @@ on:
   workflow_dispatch:
   push:
     branches: [ "**" ]
-    tags:
-      - 'v*.*.*'
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: write
+
 jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if release is needed
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get version from package.json
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          echo "Package version: $PACKAGE_VERSION"
+
+          # Get latest release tag from GitHub
+          # We use || echo "v0.0.0" to handle case where no releases exist yet
+          LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' || echo "v0.0.0")
+          if [ -z "$LATEST_TAG" ]; then LATEST_TAG="v0.0.0"; fi
+          
+          # Remove 'v' prefix if present
+          LATEST_VERSION=${LATEST_TAG#v}
+          echo "Latest release: $LATEST_VERSION"
+
+          # Compare versions using a simple node script
+          # We check if PACKAGE_VERSION > LATEST_VERSION
+          SHOULD_RELEASE=$(node -e "
+            const pv = '$PACKAGE_VERSION'.split('.').map(Number);
+            const lv = '$LATEST_VERSION'.split('.').map(Number);
+            
+            function gt(v1, v2) {
+              for (let i = 0; i < 3; i++) {
+                const a = v1[i] || 0;
+                const b = v2[i] || 0;
+                if (a > b) return true;
+                if (a < b) return false;
+              }
+              return false;
+            }
+            
+            console.log(gt(pv, lv));
+          ")
+
+          echo "Should release: $SHOULD_RELEASE"
+
+          if [ "$SHOULD_RELEASE" = "true" ]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          fi
+
   build:
+    needs: check-version
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -18,10 +77,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
@@ -48,26 +107,24 @@ jobs:
           path: dist/*.dmg
 
   release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, check-version]
+    if: needs.check-version.outputs.should_release == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Get version
-        id: get_version
-        run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_ENV
+        uses: actions/checkout@v4
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: v${{ needs.check-version.outputs.version }}
+          name: v${{ needs.check-version.outputs.version }}
+          draft: false
+          prerelease: false
           files: artifacts/**/*
