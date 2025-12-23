@@ -198,15 +198,6 @@ if (!gotTheLock) {
               });
             }
           },
-          {
-            label: t('autoCheckUpdates'),
-            type: 'checkbox',
-            checked: checkForUpdates,
-            click: (menuItem) => {
-              checkForUpdates = menuItem.checked;
-              saveConfig();
-            }
-          },
           { type: 'separator' },
           {
             label: t('language'),
@@ -243,6 +234,22 @@ if (!gotTheLock) {
       {
         label: t('help'),
         submenu: [
+          {
+            label: t('checkUpdateNow'),
+            click: () => {
+              checkUpdate(true);
+            }
+          },
+          {
+            label: t('autoCheckUpdates'),
+            type: 'checkbox',
+            checked: checkForUpdates,
+            click: (menuItem) => {
+              checkForUpdates = menuItem.checked;
+              saveConfig();
+            }
+          },
+          { type: 'separator' },
           {
             label: t('about'),
             click: async () => {
