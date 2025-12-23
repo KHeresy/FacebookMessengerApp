@@ -43,11 +43,11 @@ jobs:
           # Compare versions using a simple node script
           # We check if PACKAGE_VERSION > LATEST_VERSION
           SHOULD_RELEASE=$(node -e "
-            const pv = '$PACKAGE_VERSION'.split('.').map(Number);
-            const lv = '$LATEST_VERSION'.split('.').map(Number);
+            const pv = '$PACKAGE_VERSION'.split(/[.-]/).map(Number);
+            const lv = '$LATEST_VERSION'.split(/[.-]/).map(Number);
             
             function gt(v1, v2) {
-              for (let i = 0; i < 3; i++) {
+              for (let i = 0; i < 4; i++) {
                 const a = v1[i] || 0;
                 const b = v2[i] || 0;
                 if (a > b) return true;
