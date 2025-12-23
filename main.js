@@ -177,13 +177,19 @@ if (!gotTheLock) {
         submenu: [
           {
             label: t('about'),
-            click: () => {
-              dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
+            click: async () => {
+              const { response } = await dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
                 type: 'info',
                 title: t('about'),
                 message: `Facebook Messenger\nVersion: ${app.getVersion()}\nElectron: ${process.versions.electron}\nChrome: ${process.versions.chrome}`,
-                buttons: ['OK']
+                buttons: ['OK', t('github')],
+                defaultId: 0,
+                cancelId: 0
               });
+
+              if (response === 1) {
+                shell.openExternal('https://github.com/KHeresy/FacebookMessengerApp');
+              }
             }
           }
         ]

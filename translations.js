@@ -25,7 +25,8 @@ module.exports = {
     selectAllSingleMessage: 'Select All Single Message',
     openInBrowser: 'Open in Browser',
     copyImage: 'Copy Image',
-    language: 'Language'
+    language: 'Language',
+    github: 'GitHub Repository'
   },
   'zh-TW': {
     edit: '編輯',
@@ -53,6 +54,7 @@ module.exports = {
     selectAllSingleMessage: '全選單一訊息',
     openInBrowser: '在瀏覽器開啟',
     copyImage: '複製圖片',
-    language: '語言'
+    language: '語言',
+    github: 'GitHub 專案頁面'
   }
 };
