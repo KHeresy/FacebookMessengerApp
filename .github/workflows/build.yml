@@ -94,14 +94,14 @@ jobs:
 
       - name: Upload artifact (Windows)
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: fbm-windows
           path: dist/Facebook Messenger.exe
 
       - name: Upload artifact (macOS)
         if: matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: fbm-macos
           path: dist/*.dmg
