@@ -87,7 +87,7 @@ if (!gotTheLock) {
       // Split by dot or hyphen to handle 1.0.7-20251223 vs 1.0.7
       const v1 = currentVersion.split(/[.-]/).map(Number);
       const v2 = latestVersion.split(/[.-]/).map(Number);
-      
+
       let hasUpdate = false;
       const len = Math.max(v1.length, v2.length);
       for (let i = 0; i < len; i++) {
@@ -114,7 +114,7 @@ if (!gotTheLock) {
           shell.openExternal(data.html_url);
         }
       } else if (manual) {
-         dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
+        dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
           type: 'info',
           title: t('noUpdateAvailable'),
           message: t('latestVersionMessage'),
@@ -160,14 +160,40 @@ if (!gotTheLock) {
         {
           label: t('openDevTools'),
           click: () => {
-             const win = BrowserWindow.getFocusedWindow();
-             if (win) win.webContents.openDevTools({ mode: 'detach' });
+            const win = BrowserWindow.getFocusedWindow();
+            if (win) win.webContents.openDevTools({ mode: 'detach' });
           }
         }
       ]
     };
 
     const template = [
+      ...(process.platform === 'darwin' ? [{
+        label: app.name,
+        submenu: [
+          { role: 'about' },
+          { type: 'separator' },
+          { role: 'services' },
+          { type: 'separator' },
+          { role: 'hide' },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit' }
+        ]
+      }] : []),
+      {
+        label: t('edit'),
+        submenu: [
+          { label: t('undo'), role: 'undo' },
+          { label: t('redo'), role: 'redo' },
+          { type: 'separator' },
+          { label: t('cut'), role: 'cut' },
+          { label: t('copy'), role: 'copy' },
+          { label: t('paste'), role: 'paste' },
+          { label: t('selectAll'), role: 'selectAll' }
+        ]
+      },
       {
         label: t('view'),
         submenu: [
@@ -294,7 +320,7 @@ if (!gotTheLock) {
         preload: path.join(__dirname, 'preload.js')
       }
     });
-    
+
     // Spoof User Agent to look like regular Chrome
     mainWindow.webContents.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
@@ -339,7 +365,7 @@ if (!gotTheLock) {
         if (title === lastNotifiedTitle) {
           return;
         }
-        
+
         const now = Date.now();
         const COOLDOWN = 1000; // 3 seconds
 
@@ -351,7 +377,7 @@ if (!gotTheLock) {
           showNotification(title);
         } else {
           if (notificationTimer) clearTimeout(notificationTimer);
-          
+
           const remaining = COOLDOWN - (now - lastNotificationTime);
           notificationTimer = setTimeout(() => {
             showNotification(title);
@@ -430,8 +456,8 @@ if (!gotTheLock) {
 
       // Allow navigation to facebook login/auth pages
       // Common paths: /login.php, /vX.X/dialog/oauth, /checkpoint, etc.
-      if (hostname.endsWith('facebook.com') && 
-         (pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
+      if (hostname.endsWith('facebook.com') &&
+        (pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
         return;
       }
 
@@ -457,8 +483,8 @@ if (!gotTheLock) {
 
       // If it's a specific facebook auth link, allow it to open a popup window (standard behavior)
       // We do NOT force the main window to navigate, preventing white-out on shims.
-      if (hostname.endsWith('facebook.com') && 
-         (pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
+      if (hostname.endsWith('facebook.com') &&
+        (pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
         return { action: 'allow' };
       }
 
@@ -472,31 +498,31 @@ if (!gotTheLock) {
   // initialization and is ready to create browser windows.
   // Some APIs can only be used after this event occurs.
   app.whenReady().then(() => {
-  // Handle permission requests (e.g. for notifications)
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    console.log(`Permission requested: ${permission}`); // Debug log
-    if (permission === 'notifications') {
-      callback(true);
-    } else {
-      callback(false);
-    }
-  });
+    // Handle permission requests (e.g. for notifications)
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+      console.log(`Permission requested: ${permission}`); // Debug log
+      if (permission === 'notifications') {
+        callback(true);
+      } else {
+        callback(false);
+      }
+    });
 
-  updateApplicationMenu();
-  createWindow();
+    updateApplicationMenu();
+    createWindow();
 
-  // Check for updates
-  checkUpdate();
-  setInterval(() => {
+    // Check for updates
     checkUpdate();
-  }, 4 * 60 * 60 * 1000); // Check every 4 hours
+    setInterval(() => {
+      checkUpdate();
+    }, 4 * 60 * 60 * 1000); // Check every 4 hours
 
-  app.on('activate', function () {
-    // On macOS it's common to re-create a window in the app when the
-    // dock icon is clicked and there are no other windows open.
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    app.on('activate', function () {
+      // On macOS it's common to re-create a window in the app when the
+      // dock icon is clicked and there are no other windows open.
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
   });
-});
 }
 
 // Quit when all windows are closed, except on macOS. There, it's common
