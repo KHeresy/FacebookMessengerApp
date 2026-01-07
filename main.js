@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, Menu, session, Notification, dialog, nativeImage, ipcMain } = require('electron');
+const { app, BrowserWindow, shell, Menu, session, Notification, dialog, nativeImage, ipcMain, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const windowStateKeeper = require('electron-window-state');
@@ -66,6 +66,12 @@ if (!gotTheLock) {
       } else {
         mainWindow.setOverlayIcon(null, '');
       }
+    }
+  });
+
+  ipcMain.on('copy-to-clipboard', (event, text) => {
+    if (text) {
+      clipboard.writeText(text);
     }
   });
 
@@ -407,17 +413,36 @@ if (!gotTheLock) {
 
     // Context Menu
     mainWindow.webContents.on('context-menu', (event, params) => {
-      const menuTemplate = [
-        {
-          label: t('selectAllSingleMessage'), // Select All Single Message
-          click: () => {
-            mainWindow.webContents.send('select-all-message');
-          }
-        },
-        { type: 'separator' },
-        { label: t('copy'), role: 'copy' }, // Copy
-        { label: t('paste'), role: 'paste' }  // Paste
-      ];
+      let menuTemplate = [];
+
+      if (params.isEditable) {
+        menuTemplate = [
+          { label: t('undo'), role: 'undo' },
+          { label: t('redo'), role: 'redo' },
+          { type: 'separator' },
+          { label: t('cut'), role: 'cut' },
+          { label: t('copy'), role: 'copy' },
+          { label: t('paste'), role: 'paste' },
+          { label: t('selectAll'), role: 'selectAll' }
+        ];
+      } else {
+        menuTemplate = [
+          {
+            label: t('selectAllSingleMessage'), // Select All Single Message
+            click: () => {
+              mainWindow.webContents.send('select-all-message');
+            }
+          },
+          {
+            label: t('copySingleMessage'), // Copy Entire Message
+            click: () => {
+              mainWindow.webContents.send('copy-entire-message');
+            }
+          },
+          { type: 'separator' },
+          { label: t('copy'), role: 'copy' } // Copy
+        ];
+      }
 
       if (params.mediaType === 'image') {
         menuTemplate.push({ type: 'separator' });

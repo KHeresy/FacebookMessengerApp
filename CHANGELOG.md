@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.0.10.20260107] - 2026-01-07
+- feat: improve context menu to distinguish between editable and non-editable areas
+- feat: add "Copy Entire Message" option to context menu
+
 ## [v1.0.9-20251229] - 2025-12-29
 - fix: fix shortcuts issue on macOS
 - build: bump github actions dependencies
