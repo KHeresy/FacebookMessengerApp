@@ -27,45 +27,26 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Get version from package.json
-          PACKAGE_VERSION=$(node -p "require('./package.json').version")
-          echo "Package version: $PACKAGE_VERSION"
+          # Get version from package.json (Base Version)
+          BASE_VERSION=$(node -p "require('./package.json').version")
+          echo "Base version: $BASE_VERSION"
 
-          # Get latest release tag from GitHub
-          # We use || echo "v0.0.0" to handle case where no releases exist yet
-          LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' || echo "v0.0.0")
-          if [ -z "$LATEST_TAG" ]; then LATEST_TAG="v0.0.0"; fi
-          
-          # Remove 'v' prefix if present
-          LATEST_VERSION=${LATEST_TAG#v}
-          echo "Latest release: $LATEST_VERSION"
+          # Get Today's Date (Format: YYYYMMDD)
+          DATE_SUFFIX=$(date +'%Y%m%d')
+          echo "Date suffix: $DATE_SUFFIX"
 
-          # Compare versions using a simple node script
-          # We check if PACKAGE_VERSION > LATEST_VERSION
-          SHOULD_RELEASE=$(node -e "
-            const pv = '$PACKAGE_VERSION'.split(/[.-]/).map(Number);
-            const lv = '$LATEST_VERSION'.split(/[.-]/).map(Number);
-            
-            function gt(v1, v2) {
-              for (let i = 0; i < 4; i++) {
-                const a = v1[i] || 0;
-                const b = v2[i] || 0;
-                if (a > b) return true;
-                if (a < b) return false;
-              }
-              return false;
-            }
-            
-            console.log(gt(pv, lv));
-          ")
+          # Construct Full Target Version
+          FULL_VERSION="${BASE_VERSION}.${DATE_SUFFIX}"
+          echo "Target Full Version: $FULL_VERSION"
 
-          echo "Should release: $SHOULD_RELEASE"
-
-          if [ "$SHOULD_RELEASE" = "true" ]; then
-            echo "should_release=true" >> $GITHUB_OUTPUT
-            echo "version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
-          else
+          # Check if this release tag already exists on GitHub
+          if gh release view "v$FULL_VERSION" > /dev/null 2>&1; then
+            echo "Release v$FULL_VERSION already exists. Skipping."
             echo "should_release=false" >> $GITHUB_OUTPUT
+          else
+            echo "Release v$FULL_VERSION does not exist. Proceeding."
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "version=$FULL_VERSION" >> $GITHUB_OUTPUT
           fi
 
   build:
@@ -87,6 +68,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Set version in package.json
+        if: needs.check-version.outputs.should_release == 'true'
+        run: npm pkg set version=${{ needs.check-version.outputs.version }}
+
       - name: Build application
         run: npm run build
         env:
@@ -97,7 +82,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: fbm-windows
-          path: dist/Facebook Messenger.exe
+          path: dist/*.exe
 
       - name: Upload artifact (macOS)
         if: matrix.os == 'macos-latest'
@@ -125,6 +110,6 @@ jobs:
         with:
           tag_name: v${{ needs.check-version.outputs.version }}
           name: v${{ needs.check-version.outputs.version }}
-          draft: false
+          draft: true
           prerelease: false
           files: artifacts/**/*
