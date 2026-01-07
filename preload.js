@@ -73,6 +73,15 @@ ipcRenderer.on('select-all-message', () => {
     }
 });
 
+ipcRenderer.on('copy-entire-message', () => {
+    if (lastRightClickElement) {
+        const text = lastRightClickElement.innerText || lastRightClickElement.textContent || '';
+        if (text) {
+            ipcRenderer.send('copy-to-clipboard', text);
+        }
+    }
+});
+
 window.addEventListener('DOMContentLoaded', () => {
     // Initial check
     updateBadge();

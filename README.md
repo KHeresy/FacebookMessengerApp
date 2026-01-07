@@ -10,11 +10,9 @@ A lightweight, Electron-based desktop application for [Facebook Messenger](https
 *   **Multi-language Support**: Interface available in **English** and **Traditional Chinese (繁體中文)**.
 *   **Auto Updates**: Automatically checks for new versions from GitHub Releases and notifies you.
 *   **Desktop Notifications**: Native system notifications for incoming messages.
-*   **Enhanced Context Menu**: Right-click support for:
-    *   Copying/Pasting text.
-    *   Copying images.
-    *   Opening links in the default browser.
-    *   Select All.
+*   **Enhanced Context Menu**: Context-aware right-click support:
+    *   **Editable Areas**: Undo, Redo, Cut, Copy, Paste, Select All.
+    *   **Messages**: Copy Entire Message, Select All, Copy Image, Open Links.
 *   **Security & Privacy**: External links and Facebook tracking URLs are automatically opened in your default browser for safety.
 *   **Window State Management**: Remembers your window size and position.
 
