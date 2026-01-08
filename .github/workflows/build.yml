@@ -112,4 +112,5 @@ jobs:
           name: v${{ needs.check-version.outputs.version }}
           draft: true
           prerelease: false
+          generate_release_notes: true
           files: artifacts/**/*
