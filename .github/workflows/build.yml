@@ -36,7 +36,7 @@ jobs:
           echo "Date suffix: $DATE_SUFFIX"
 
           # Construct Full Target Version
-          FULL_VERSION="${BASE_VERSION}.${DATE_SUFFIX}"
+          FULL_VERSION="${BASE_VERSION}+${DATE_SUFFIX}"
           echo "Target Full Version: $FULL_VERSION"
 
           # Check if this release tag already exists on GitHub
