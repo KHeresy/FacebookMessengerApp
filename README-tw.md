@@ -1,6 +1,6 @@
 # Facebook Messenger App
 
-一個基於 Electron 開發的 [Facebook Messenger](https://www.messenger.com/) 桌面應用程式。本專案將官方網頁版介面封裝為具有原生體驗的桌面軟體，並增強了多項功能。
+一個基於 Electron 開發的 [Facebook Messenger](https://www.facebook.com/messages/) 桌面應用程式。本專案將官方網頁版介面封裝為具有原生體驗的桌面軟體，並增強了多項功能。
 
 [English Readme](README.md)
 

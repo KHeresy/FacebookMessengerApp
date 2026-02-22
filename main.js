@@ -91,8 +91,8 @@ if (!gotTheLock) {
       const currentVersion = app.getVersion();
 
       // Split by dot or hyphen to handle 1.0.7-20251223 vs 1.0.7
-      const v1 = currentVersion.split(/[.-]/).map(Number);
-      const v2 = latestVersion.split(/[.-]/).map(Number);
+      const v1 = currentVersion.split(/[.-+]/).map(Number);
+      const v2 = latestVersion.split(/[.-+]/).map(Number);
 
       let hasUpdate = false;
       const len = Math.max(v1.length, v2.length);
@@ -409,7 +409,7 @@ if (!gotTheLock) {
     mainWindowState.manage(mainWindow);
 
     // Load the Facebook Messages URL.
-    mainWindow.loadURL('https://www.messenger.com/');
+    mainWindow.loadURL('https://www.facebook.com/messages/');
 
     // Context Menu
     mainWindow.webContents.on('context-menu', (event, params) => {
@@ -474,15 +474,16 @@ if (!gotTheLock) {
       const hostname = parsedUrl.hostname;
       const pathname = parsedUrl.pathname;
 
-      // Allow navigation strictly to messenger.com (but not subdomains like l.messenger.com)
-      if (hostname === 'www.messenger.com' || hostname === 'm.messenger.com') {
+      // Allow navigation to messenger.com or facebook.com/messages
+      if (hostname === 'www.messenger.com' || hostname === 'm.messenger.com' ||
+        ((hostname === 'www.facebook.com' || hostname === 'm.facebook.com') && pathname.startsWith('/messages'))) {
         return;
       }
 
       // Allow navigation to facebook login/auth pages
       // Common paths: /login.php, /vX.X/dialog/oauth, /checkpoint, etc.
       if (hostname.endsWith('facebook.com') &&
-        (pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
+          (pathname.includes('/two_step_verification') || pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
         return;
       }
 
@@ -498,8 +499,9 @@ if (!gotTheLock) {
       const hostname = parsedUrl.hostname;
       const pathname = parsedUrl.pathname;
 
-      // If it's a messenger.com link, keep it in the app (main window)
-      if (hostname === 'www.messenger.com' || hostname === 'm.messenger.com') {
+      // If it's a messenger.com link or facebook.com/messages link, keep it in the app (main window)
+      if (hostname === 'www.messenger.com' || hostname === 'm.messenger.com' ||
+        ((hostname === 'www.facebook.com' || hostname === 'm.facebook.com') && pathname.startsWith('/messages'))) {
         mainWindow.loadURL(url);
         if (mainWindow.isMinimized()) mainWindow.restore();
         mainWindow.focus();
