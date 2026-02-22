@@ -91,8 +91,8 @@ if (!gotTheLock) {
       const currentVersion = app.getVersion();
 
       // Split by dot or hyphen to handle 1.0.7-20251223 vs 1.0.7
-      const v1 = currentVersion.split(/[.-+]/).map(Number);
-      const v2 = latestVersion.split(/[.-+]/).map(Number);
+      const v1 = currentVersion.split(/[.+-]/).map(Number);
+      const v2 = latestVersion.split(/[.+-]/).map(Number);
 
       let hasUpdate = false;
       const len = Math.max(v1.length, v2.length);
