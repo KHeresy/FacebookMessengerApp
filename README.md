@@ -1,6 +1,6 @@
 # Facebook Messenger App
 
-A lightweight, Electron-based desktop application for [Facebook Messenger](https://www.messenger.com/). This project wraps the official web interface into a native-feeling desktop app with enhanced features.
+A lightweight, Electron-based desktop application for [Facebook Messenger](https://www.facebook.com/messages/). This project wraps the official web interface into a native-feeling desktop app with enhanced features.
 
 [中文說明 (Traditional Chinese)](README-tw.md)
 

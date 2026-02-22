@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.1.0.20260222] - 2026-02-22
+- main page URL changed to https://www.facebook.com/messages
+- If redirected to Facebook homepage after login, please restart the app
+
 ## [v1.0.10.20260107] - 2026-01-07
 - feat: improve context menu to distinguish between editable and non-editable areas
 - feat: add "Copy Entire Message" option to context menu
