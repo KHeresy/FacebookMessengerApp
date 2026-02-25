@@ -13,6 +13,7 @@ let checkForUpdates = true;
 let mainWindow;
 let currentLang = 'zh-TW'; // Default language
 
+
 // Config persistence
 const configPath = path.join(app.getPath('userData'), 'config.json');
 
@@ -21,7 +22,7 @@ function loadConfig() {
     if (fs.existsSync(configPath)) {
       const data = fs.readFileSync(configPath, 'utf8');
       const config = JSON.parse(data);
-      if (config.language) {
+      if (config.language && Object.prototype.hasOwnProperty.call(translations, config.language)) {
         currentLang = config.language;
       }
       if (config.checkForUpdates !== undefined) {
@@ -59,6 +60,10 @@ if (!gotTheLock) {
   });
 
   ipcMain.on('update-badge', (event, { dataUrl, text }) => {
+    if (event.sender !== mainWindow?.webContents) {
+      return;
+    }
+
     if (mainWindow) {
       if (dataUrl) {
         const img = nativeImage.createFromDataURL(dataUrl);
@@ -70,10 +75,26 @@ if (!gotTheLock) {
   });
 
   ipcMain.on('copy-to-clipboard', (event, text) => {
-    if (text) {
+    if (event.sender !== mainWindow?.webContents) {
+      return;
+    }
+
+    if (typeof text === 'string' && text) {
       clipboard.writeText(text);
     }
   });
+
+  function openExternalSafely(urlString) {
+    try {
+      const parsedUrl = new URL(urlString);
+      if (!['https:', 'http:'].includes(parsedUrl.protocol)) {
+        return;
+      }
+      shell.openExternal(parsedUrl.toString());
+    } catch {
+      // Ignore invalid URL values from untrusted pages.
+    }
+  }
 
   // Helper to get text based on current language
   function t(key) {
@@ -117,7 +138,7 @@ if (!gotTheLock) {
         });
 
         if (btnIndex === 0) {
-          shell.openExternal(data.html_url);
+          openExternalSafely(data.html_url);
         }
       } else if (manual) {
         dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
@@ -323,6 +344,9 @@ if (!gotTheLock) {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        sandbox: true,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
         preload: path.join(__dirname, 'preload.js')
       }
     });
@@ -459,7 +483,7 @@ if (!gotTheLock) {
         menuTemplate.push({
           label: t('openInBrowser'), // Open in Browser
           click: () => {
-            shell.openExternal(params.linkURL);
+            openExternalSafely(params.linkURL);
           }
         });
       }
@@ -470,7 +494,14 @@ if (!gotTheLock) {
 
     // Intercept in-page navigation (e.g. clicking links)
     mainWindow.webContents.on('will-navigate', (event, url) => {
-      const parsedUrl = new URL(url);
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(url);
+      } catch {
+        event.preventDefault();
+        return;
+      }
+
       const hostname = parsedUrl.hostname;
       const pathname = parsedUrl.pathname;
 
@@ -490,12 +521,18 @@ if (!gotTheLock) {
       // For everything else (including l.facebook.com, generic facebook.com, and external sites),
       // block navigation and open externally.
       event.preventDefault();
-      shell.openExternal(url);
+      openExternalSafely(url);
     });
 
     // Open links externally (handling target="_blank" / window.open)
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-      const parsedUrl = new URL(url);
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(url);
+      } catch {
+        return { action: 'deny' };
+      }
+
       const hostname = parsedUrl.hostname;
       const pathname = parsedUrl.pathname;
 
@@ -516,7 +553,7 @@ if (!gotTheLock) {
       }
 
       // All other links (external sites, l.facebook.com redirects, etc.) -> Open in System Browser
-      shell.openExternal(url);
+      openExternalSafely(url);
       return { action: 'deny' };
     });
   }
@@ -525,15 +562,14 @@ if (!gotTheLock) {
   // initialization and is ready to create browser windows.
   // Some APIs can only be used after this event occurs.
   app.whenReady().then(() => {
-    // Handle permission requests (e.g. for notifications)
-    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-      console.log(`Permission requested: ${permission}`); // Debug log
-      if (permission === 'notifications') {
-        callback(true);
-      } else {
-        callback(false);
-      }
+    // Block website-level Web Notifications from facebook.com.
+    // We only use the app's own message notifications (page-title-updated handler),
+    // so non-message Facebook notifications won't pop up at OS level.
+    session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+      callback(false);
     });
+
+    session.defaultSession.setPermissionCheckHandler(() => false);
 
     updateApplicationMenu();
     createWindow();
