@@ -365,8 +365,10 @@ if (!gotTheLock) {
       }
 
       // If the window is focused, we assume the user sees the message, so no notification.
-      // If the title is generic 'Messenger', ignore it.
-      if (notificationsEnabled && !mainWindow.isFocused() && title !== 'Messenger') {
+      // We ignore generic titles like 'Messenger', 'Facebook', and 'Messages | Facebook'
+      const isGeneric = title === 'Messenger' || title === 'Facebook' || title === 'Messages' || title.endsWith('| Facebook');
+
+      if (notificationsEnabled && !mainWindow.isFocused() && !isGeneric) {
         // Prevent duplicate notifications for the exact same title text
         if (title === lastNotifiedTitle) {
           return;
