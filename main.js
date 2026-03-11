@@ -12,7 +12,7 @@ const windowStateKeeper = require('electron-window-state');
 const translations = require('./translations');
 
 if (process.platform === 'win32') {
-  app.setAppUserModelId('com.electron.fbmessenger');
+  app.setAppUserModelId('com.heresy.fbmessenger');
 }
 
 let notificationsEnabled = true;
