@@ -38,7 +38,9 @@ module.exports = {
     updateAvailable: 'Update Available',
     updateMessage: 'A new version {version} is available. Do you want to download it now?',
     download: 'Download',
-    later: 'Later'
+    later: 'Later',
+    loadFailedTitle: 'Messenger Load Failed',
+    loadFailedMessage: 'Please check your internet connection or click the button below to retry.'
   },
   'zh-TW': {
     edit: '編輯',
@@ -79,6 +81,8 @@ module.exports = {
     updateAvailable: '有新版本可用',
     updateMessage: '發現新版本 {version}。您想要現在下載嗎？',
     download: '下載',
-    later: '稍後'
+    later: '稍後',
+    loadFailedTitle: 'Messenger 載入失敗',
+    loadFailedMessage: '請檢查您的網路連線，或點擊下方按鈕重新嘗試。'
   }
 };
