@@ -180,6 +180,29 @@ if (!gotTheLock) {
               const win = BrowserWindow.getFocusedWindow() || mainWindow;
               if (win) win.webContents.openDevTools({ mode: 'detach' });
             }
+          },
+          { type: 'separator' },
+          {
+            label: t('sendTestNotification'),
+            click: () => {
+              setTimeout(() => {
+                const notification = new Notification({
+                  title: t('testNotificationTitle'),
+                  body: t('testNotificationBody'),
+                  silent: false
+                });
+
+                notification.on('click', () => {
+                  if (mainWindow) {
+                    if (mainWindow.isMinimized()) mainWindow.restore();
+                    mainWindow.focus();
+                  }
+                });
+
+                notification.show();
+                if (mainWindow) mainWindow.flashFrame(true);
+              }, 3000);
+            }
           }
         ]
       };
