@@ -1,11 +1,18 @@
 const { app, BrowserWindow, shell, Menu, session, Notification, dialog, nativeImage, ipcMain, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
+
+// Handle Hardware Acceleration
+if (process.argv.includes('--disable-gpu')) {
+  console.log('Disabling hardware acceleration...');
+  app.disableHardwareAcceleration();
+}
+
 const windowStateKeeper = require('electron-window-state');
 const translations = require('./translations');
 
 if (process.platform === 'win32') {
-  app.setAppUserModelId('com.electron.fbmessenger');
+  app.setAppUserModelId('com.heresy.fbmessenger');
 }
 
 let notificationsEnabled = true;
@@ -77,7 +84,8 @@ if (!gotTheLock) {
 
   // Helper to get text based on current language
   function t(key) {
-    return translations[currentLang][key] || key;
+    const langData = translations[currentLang] || translations['zh-TW'] || translations['en'];
+    return langData[key] || key;
   }
 
   async function checkUpdate(manual = false) {
@@ -107,7 +115,9 @@ if (!gotTheLock) {
       }
 
       if (hasUpdate) {
-        const { response: btnIndex } = await dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
+        const focusedWin = BrowserWindow.getFocusedWindow();
+        const activeWin = (focusedWin && !focusedWin.isDestroyed()) ? focusedWin : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined);
+        const { response: btnIndex } = await dialog.showMessageBox(activeWin, {
           type: 'info',
           title: t('updateAvailable'),
           message: t('updateMessage').replace('{version}', latestVersion),
@@ -120,7 +130,9 @@ if (!gotTheLock) {
           shell.openExternal(data.html_url);
         }
       } else if (manual) {
-        dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
+        const focusedWin = BrowserWindow.getFocusedWindow();
+        const activeWin = (focusedWin && !focusedWin.isDestroyed()) ? focusedWin : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined);
+        dialog.showMessageBox(activeWin, {
           type: 'info',
           title: t('noUpdateAvailable'),
           message: t('latestVersionMessage'),
@@ -136,175 +148,204 @@ if (!gotTheLock) {
   }
 
   function updateApplicationMenu() {
-    const debugMenu = {
-      label: t('debug'),
-      submenu: [
-        {
-          label: t('goBack'),
-          accelerator: 'Alt+Left',
-          click: () => {
-            const win = BrowserWindow.getFocusedWindow();
-            if (win && win.webContents.canGoBack()) {
-              win.webContents.goBack();
-            }
-          }
-        },
-        {
-          label: t('showCurrentUrl'),
-          click: () => {
-            const win = BrowserWindow.getFocusedWindow();
-            if (win) {
-              dialog.showMessageBox(win, {
-                type: 'info',
-                title: t('showCurrentUrl'),
-                message: win.webContents.getURL(),
-                buttons: ['OK']
-              });
-            }
-          }
-        },
-        {
-          label: t('openDevTools'),
-          click: () => {
-            const win = BrowserWindow.getFocusedWindow();
-            if (win) win.webContents.openDevTools({ mode: 'detach' });
-          }
-        }
-      ]
-    };
-
-    const template = [
-      ...(process.platform === 'darwin' ? [{
-        label: app.name,
-        submenu: [
-          { role: 'about' },
-          { type: 'separator' },
-          { role: 'services' },
-          { type: 'separator' },
-          { role: 'hide' },
-          { role: 'hideOthers' },
-          { role: 'unhide' },
-          { type: 'separator' },
-          { role: 'quit' }
-        ]
-      }] : []),
-      {
-        label: t('edit'),
-        submenu: [
-          { label: t('undo'), role: 'undo' },
-          { label: t('redo'), role: 'redo' },
-          { type: 'separator' },
-          { label: t('cut'), role: 'cut' },
-          { label: t('copy'), role: 'copy' },
-          { label: t('paste'), role: 'paste' },
-          { label: t('selectAll'), role: 'selectAll' }
-        ]
-      },
-      {
-        label: t('view'),
-        submenu: [
-          { label: t('reload'), role: 'reload' },
-          { label: t('forceReload'), role: 'forceReload' },
-          { type: 'separator' },
-          { label: t('resetZoom'), role: 'resetZoom' },
-          { label: t('zoomIn'), role: 'zoomIn' },
-          { label: t('zoomOut'), role: 'zoomOut' },
-          { type: 'separator' },
-          { label: t('toggleFullscreen'), role: 'togglefullscreen' },
-          { type: 'separator' },
-          {
-            label: t('enableNotifications'),
-            type: 'checkbox',
-            checked: notificationsEnabled,
-            click: (menuItem) => {
-              notificationsEnabled = menuItem.checked;
-            }
-          },
-          {
-            label: t('launchAtStartup'),
-            type: 'checkbox',
-            checked: app.getLoginItemSettings().openAtLogin,
-            click: (menuItem) => {
-              app.setLoginItemSettings({
-                openAtLogin: menuItem.checked
-              });
-            }
-          },
-          { type: 'separator' },
-          {
-            label: t('language'),
-            submenu: [
-              {
-                label: 'English',
-                type: 'radio',
-                checked: currentLang === 'en',
-                click: () => {
-                  if (currentLang !== 'en') {
-                    currentLang = 'en';
-                    saveConfig();
-                    updateApplicationMenu();
-                  }
-                }
-              },
-              {
-                label: '繁體中文',
-                type: 'radio',
-                checked: currentLang === 'zh-TW',
-                click: () => {
-                  if (currentLang !== 'zh-TW') {
-                    currentLang = 'zh-TW';
-                    saveConfig();
-                    updateApplicationMenu();
-                  }
-                }
-              }
-            ]
-          }
-        ]
-      },
-      debugMenu,
-      {
-        label: t('help'),
+    try {
+      const debugMenu = {
+        label: t('debug'),
         submenu: [
           {
-            label: t('checkUpdateNow'),
+            label: t('goBack'),
+            accelerator: 'Alt+Left',
             click: () => {
-              checkUpdate(true);
+              const win = BrowserWindow.getFocusedWindow() || mainWindow;
+              if (win && win.webContents.canGoBack()) {
+                win.webContents.goBack();
+              }
             }
           },
           {
-            label: t('autoCheckUpdates'),
-            type: 'checkbox',
-            checked: checkForUpdates,
-            click: (menuItem) => {
-              checkForUpdates = menuItem.checked;
-              saveConfig();
+            label: t('showCurrentUrl'),
+            click: () => {
+              const win = BrowserWindow.getFocusedWindow() || mainWindow;
+              if (win) {
+                dialog.showMessageBox(win, {
+                  type: 'info',
+                  title: t('showCurrentUrl'),
+                  message: win.webContents.getURL(),
+                  buttons: ['OK']
+                });
+              }
+            }
+          },
+          {
+            label: t('openDevTools'),
+            click: () => {
+              const win = BrowserWindow.getFocusedWindow() || mainWindow;
+              if (win) win.webContents.openDevTools({ mode: 'detach' });
             }
           },
           { type: 'separator' },
           {
-            label: t('about'),
-            click: async () => {
-              const { response } = await dialog.showMessageBox(BrowserWindow.getFocusedWindow() || undefined, {
-                type: 'info',
-                title: t('about'),
-                message: `Facebook Messenger\nVersion: ${app.getVersion()}\nElectron: ${process.versions.electron}\nChrome: ${process.versions.chrome}`,
-                buttons: ['OK', t('github')],
-                defaultId: 0,
-                cancelId: 0
-              });
+            label: t('sendTestNotification'),
+            click: () => {
+              setTimeout(() => {
+                const notification = new Notification({
+                  title: t('testNotificationTitle'),
+                  body: t('testNotificationBody'),
+                  silent: false
+                });
 
-              if (response === 1) {
-                shell.openExternal('https://github.com/KHeresy/FacebookMessengerApp');
-              }
+                notification.on('click', () => {
+                  if (mainWindow) {
+                    if (mainWindow.isMinimized()) mainWindow.restore();
+                    mainWindow.focus();
+                  }
+                });
+
+                notification.show();
+                if (mainWindow) mainWindow.flashFrame(true);
+              }, 3000);
             }
           }
         ]
-      }
-    ];
+      };
 
-    const menu = Menu.buildFromTemplate(template);
-    Menu.setApplicationMenu(menu);
+      const template = [
+        ...(process.platform === 'darwin' ? [{
+          label: app.name,
+          submenu: [
+            { role: 'about' },
+            { type: 'separator' },
+            { role: 'services' },
+            { type: 'separator' },
+            { role: 'hide' },
+            { role: 'hideOthers' },
+            { role: 'unhide' },
+            { type: 'separator' },
+            { role: 'quit' }
+          ]
+        }] : []),
+        {
+          label: t('edit'),
+          submenu: [
+            { label: t('undo'), role: 'undo' },
+            { label: t('redo'), role: 'redo' },
+            { type: 'separator' },
+            { label: t('cut'), role: 'cut' },
+            { label: t('copy'), role: 'copy' },
+            { label: t('paste'), role: 'paste' },
+            { label: t('selectAll'), role: 'selectAll' }
+          ]
+        },
+        {
+          label: t('view'),
+          submenu: [
+            { label: t('reload'), role: 'reload' },
+            { label: t('forceReload'), role: 'forceReload' },
+            { type: 'separator' },
+            { label: t('resetZoom'), role: 'resetZoom' },
+            { label: t('zoomIn'), role: 'zoomIn' },
+            { label: t('zoomOut'), role: 'zoomOut' },
+            { type: 'separator' },
+            { label: t('toggleFullscreen'), role: 'togglefullscreen' },
+            { type: 'separator' },
+            {
+              label: t('enableNotifications'),
+              type: 'checkbox',
+              checked: notificationsEnabled,
+              click: (menuItem) => {
+                notificationsEnabled = menuItem.checked;
+              }
+            },
+            {
+              label: t('launchAtStartup'),
+              type: 'checkbox',
+              checked: app.getLoginItemSettings().openAtLogin,
+              click: (menuItem) => {
+                app.setLoginItemSettings({
+                  openAtLogin: menuItem.checked
+                });
+              }
+            },
+            { type: 'separator' },
+            {
+              label: t('language'),
+              submenu: [
+                {
+                  label: 'English',
+                  type: 'radio',
+                  checked: currentLang === 'en',
+                  click: () => {
+                    if (currentLang !== 'en') {
+                      currentLang = 'en';
+                      saveConfig();
+                      updateApplicationMenu();
+                    }
+                  }
+                },
+                {
+                  label: '繁體中文',
+                  type: 'radio',
+                  checked: currentLang === 'zh-TW',
+                  click: () => {
+                    if (currentLang !== 'zh-TW') {
+                      currentLang = 'zh-TW';
+                      saveConfig();
+                      updateApplicationMenu();
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        debugMenu,
+        {
+          label: t('help'),
+          submenu: [
+            {
+              label: t('checkUpdateNow'),
+              click: () => {
+                checkUpdate(true);
+              }
+            },
+            {
+              label: t('autoCheckUpdates'),
+              type: 'checkbox',
+              checked: checkForUpdates,
+              click: (menuItem) => {
+                checkForUpdates = menuItem.checked;
+                saveConfig();
+              }
+            },
+            { type: 'separator' },
+            {
+              label: t('about'),
+              click: async () => {
+                const focusedWin = BrowserWindow.getFocusedWindow();
+                const activeWin = (focusedWin && !focusedWin.isDestroyed()) ? focusedWin : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined);
+                const { response } = await dialog.showMessageBox(activeWin, {
+                  type: 'info',
+                  title: t('about'),
+                  message: `Facebook Messenger\nVersion: ${app.getVersion()}\nElectron: ${process.versions.electron}\nChrome: ${process.versions.chrome}`,
+                  buttons: ['OK', t('github')],
+                  defaultId: 0,
+                  cancelId: 0
+                });
+
+                if (response === 1) {
+                  shell.openExternal('https://github.com/KHeresy/FacebookMessengerApp');
+                }
+              }
+            }
+          ]
+        }
+      ];
+
+      const menu = Menu.buildFromTemplate(template);
+      Menu.setApplicationMenu(menu);
+    } catch (e) {
+      console.error('Failed to update menu:', e);
+    }
   }
 
   function createWindow() {
@@ -320,6 +361,8 @@ if (!gotTheLock) {
       y: mainWindowState.y,
       width: mainWindowState.width,
       height: mainWindowState.height,
+      show: true, // Show immediately to improve perceived speed
+      backgroundColor: '#f0f2f5', // Messenger's background color
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -410,8 +453,56 @@ if (!gotTheLock) {
     // and restore the maximized or full screen state
     mainWindowState.manage(mainWindow);
 
-    // Load the Facebook Messages URL.
-    mainWindow.loadURL('https://www.facebook.com/messages/');
+    // Show window when ready to show
+    mainWindow.once('ready-to-show', () => {
+      mainWindow.show();
+    });
+
+    // Load failure handling
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      // Only handle failures for the main frame. 
+      // This prevents minor iframe or subresource errors from blanking out the whole app.
+      if (!isMainFrame) return;
+
+      console.error(`Page failed to load: ${errorDescription} (${errorCode}) at ${validatedURL}`);
+      
+      // -3 (ABORTED) is common during redirects, ignore it.
+      // -102 (CONNECTION_REFUSED), -105 (NAME_NOT_RESOLVED), -106 (INTERNET_DISCONNECTED) are common at startup
+      const transientErrors = [-102, -105, -106, -100, -101, -118];
+      
+      if (transientErrors.includes(errorCode)) {
+        console.log('Transient network error detected, retrying in 5 seconds...');
+        setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.loadURL('https://www.facebook.com/messages/').catch(() => {});
+          }
+        }, 5000);
+        return;
+      }
+
+      if (errorCode !== -3) {
+        const errorHtml = `
+          <html>
+            <body style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: #f0f2f5; margin: 0; padding: 20px; text-align: center;">
+              <h2 style="color: #1c1e21;">${t('loadFailedTitle')}</h2>
+              <p style="color: #65676b;">${errorDescription} (${errorCode})</p>
+              <p style="font-size: 14px; color: #8a8d91;">${t('loadFailedMessage')}</p>
+              <button onclick="location.href='https://www.facebook.com/messages/'" style="padding: 12px 24px; background: #0084ff; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 16px; margin-top: 10px;">${t('reload')}</button>
+            </body>
+          </html>
+        `;
+        mainWindow.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(errorHtml)}`);
+      }
+    });
+
+    // Load the Facebook Messages URL with a slight delay if it's the first run
+    const startLoading = () => {
+      mainWindow.loadURL('https://www.facebook.com/messages/').catch(err => {
+        console.error('Initial load failed:', err);
+      });
+    };
+
+    startLoading();
 
     // Context Menu
     mainWindow.webContents.on('context-menu', (event, params) => {
@@ -472,54 +563,63 @@ if (!gotTheLock) {
 
     // Intercept in-page navigation (e.g. clicking links)
     mainWindow.webContents.on('will-navigate', (event, url) => {
-      const parsedUrl = new URL(url);
-      const hostname = parsedUrl.hostname;
-      const pathname = parsedUrl.pathname;
+      try {
+        const parsedUrl = new URL(url);
+        const hostname = parsedUrl.hostname;
+        const pathname = parsedUrl.pathname;
 
-      // Allow navigation to messenger.com or facebook.com/messages
-      if (hostname === 'www.messenger.com' || hostname === 'm.messenger.com' ||
-        ((hostname === 'www.facebook.com' || hostname === 'm.facebook.com') && pathname.startsWith('/messages'))) {
-        return;
+        // Allow navigation to messenger.com or facebook.com/messages
+        if (hostname === 'www.messenger.com' || hostname === 'm.messenger.com' ||
+          ((hostname === 'www.facebook.com' || hostname === 'm.facebook.com') && pathname.startsWith('/messages'))) {
+          return;
+        }
+
+        // Allow navigation to facebook login/auth pages
+        // Common paths: /login.php, /vX.X/dialog/oauth, /checkpoint, etc.
+        if (hostname.endsWith('facebook.com') &&
+            (pathname.includes('/two_step_verification') || pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
+          return;
+        }
+
+        // For everything else (including l.facebook.com, generic facebook.com, and external sites),
+        // block navigation and open externally.
+        event.preventDefault();
+        shell.openExternal(url);
+      } catch (e) {
+        console.error('Navigation error:', e);
       }
-
-      // Allow navigation to facebook login/auth pages
-      // Common paths: /login.php, /vX.X/dialog/oauth, /checkpoint, etc.
-      if (hostname.endsWith('facebook.com') &&
-          (pathname.includes('/two_step_verification') || pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
-        return;
-      }
-
-      // For everything else (including l.facebook.com, generic facebook.com, and external sites),
-      // block navigation and open externally.
-      event.preventDefault();
-      shell.openExternal(url);
     });
 
     // Open links externally (handling target="_blank" / window.open)
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-      const parsedUrl = new URL(url);
-      const hostname = parsedUrl.hostname;
-      const pathname = parsedUrl.pathname;
+      try {
+        const parsedUrl = new URL(url);
+        const hostname = parsedUrl.hostname;
+        const pathname = parsedUrl.pathname;
 
-      // If it's a messenger.com link or facebook.com/messages link, keep it in the app (main window)
-      if (hostname === 'www.messenger.com' || hostname === 'm.messenger.com' ||
-        ((hostname === 'www.facebook.com' || hostname === 'm.facebook.com') && pathname.startsWith('/messages'))) {
-        mainWindow.loadURL(url);
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.focus();
+        // If it's a messenger.com link or facebook.com/messages link, keep it in the app (main window)
+        if (hostname === 'www.messenger.com' || hostname === 'm.messenger.com' ||
+          ((hostname === 'www.facebook.com' || hostname === 'm.facebook.com') && pathname.startsWith('/messages'))) {
+          mainWindow.loadURL(url);
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.focus();
+          return { action: 'deny' };
+        }
+
+        // If it's a specific facebook auth link, allow it to open a popup window (standard behavior)
+        // We do NOT force the main window to navigate, preventing white-out on shims.
+        if (hostname.endsWith('facebook.com') &&
+          (pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
+          return { action: 'allow' };
+        }
+
+        // All other links (external sites, l.facebook.com redirects, etc.) -> Open in System Browser
+        shell.openExternal(url);
+        return { action: 'deny' };
+      } catch (e) {
+        console.error('Window open handler error:', e);
         return { action: 'deny' };
       }
-
-      // If it's a specific facebook auth link, allow it to open a popup window (standard behavior)
-      // We do NOT force the main window to navigate, preventing white-out on shims.
-      if (hostname.endsWith('facebook.com') &&
-        (pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
-        return { action: 'allow' };
-      }
-
-      // All other links (external sites, l.facebook.com redirects, etc.) -> Open in System Browser
-      shell.openExternal(url);
-      return { action: 'deny' };
     });
   }
 
@@ -527,30 +627,36 @@ if (!gotTheLock) {
   // initialization and is ready to create browser windows.
   // Some APIs can only be used after this event occurs.
   app.whenReady().then(() => {
-    // Handle permission requests (e.g. for notifications)
-    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-      console.log(`Permission requested: ${permission}`); // Debug log
-      if (permission === 'notifications') {
-        callback(true);
-      } else {
-        callback(false);
-      }
-    });
+    try {
+      // Handle permission requests (e.g. for notifications)
+      session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+        if (permission === 'notifications') {
+          callback(true);
+        } else {
+          callback(false);
+        }
+      });
 
-    updateApplicationMenu();
-    createWindow();
+      updateApplicationMenu();
+      createWindow();
 
-    // Check for updates
-    checkUpdate();
-    setInterval(() => {
+      // Check for updates
       checkUpdate();
-    }, 4 * 60 * 60 * 1000); // Check every 4 hours
+      setInterval(() => {
+        checkUpdate();
+      }, 4 * 60 * 60 * 1000); // Check every 4 hours
 
-    app.on('activate', function () {
-      // On macOS it's common to re-create a window in the app when the
-      // dock icon is clicked and there are no other windows open.
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    });
+      app.on('activate', function () {
+        // On macOS it's common to re-create a window in the app when the
+        // dock icon is clicked and there are no other windows open.
+        if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      });
+    } catch (err) {
+      console.error('Failed to start application:', err);
+      dialog.showErrorBox('Startup Error', `Failed to start application: ${err.message}`);
+    }
+  }).catch(err => {
+    console.error('app.whenReady failed:', err);
   });
 }
 

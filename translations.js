@@ -30,12 +30,17 @@ module.exports = {
     github: 'GitHub Repository',
     autoCheckUpdates: 'Auto Check for Updates',
     checkUpdateNow: 'Check for Updates...',
+    sendTestNotification: 'Send Test Notification (3s delay)',
+    testNotificationTitle: 'Test Notification',
+    testNotificationBody: 'This is a test notification from Facebook Messenger App.',
     noUpdateAvailable: 'No Update Available',
     latestVersionMessage: 'You are using the latest version.',
     updateAvailable: 'Update Available',
     updateMessage: 'A new version {version} is available. Do you want to download it now?',
     download: 'Download',
-    later: 'Later'
+    later: 'Later',
+    loadFailedTitle: 'Messenger Load Failed',
+    loadFailedMessage: 'Please check your internet connection or click the button below to retry.'
   },
   'zh-TW': {
     edit: '編輯',
@@ -68,11 +73,16 @@ module.exports = {
     github: 'GitHub 專案頁面',
     autoCheckUpdates: '自動檢查更新',
     checkUpdateNow: '檢查更新...',
+    sendTestNotification: '發送測試通知 (3秒延遲)',
+    testNotificationTitle: '測試通知',
+    testNotificationBody: '這是一封來自 Facebook Messenger App 的測試通知。',
     noUpdateAvailable: '沒有可用的更新',
     latestVersionMessage: '您目前使用的是最新版本。',
     updateAvailable: '有新版本可用',
     updateMessage: '發現新版本 {version}。您想要現在下載嗎？',
     download: '下載',
-    later: '稍後'
+    later: '稍後',
+    loadFailedTitle: 'Messenger 載入失敗',
+    loadFailedMessage: '請檢查您的網路連線，或點擊下方按鈕重新嘗試。'
   }
 };
