@@ -115,8 +115,9 @@ if (!gotTheLock) {
       }
 
       if (hasUpdate) {
-        const activeWin = BrowserWindow.getFocusedWindow() || mainWindow;
-        const { response: btnIndex } = await dialog.showMessageBox(activeWin || undefined, {
+        const focusedWin = BrowserWindow.getFocusedWindow();
+        const activeWin = (focusedWin && !focusedWin.isDestroyed()) ? focusedWin : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined);
+        const { response: btnIndex } = await dialog.showMessageBox(activeWin, {
           type: 'info',
           title: t('updateAvailable'),
           message: t('updateMessage').replace('{version}', latestVersion),
@@ -456,7 +457,11 @@ if (!gotTheLock) {
     });
 
     // Load failure handling
-    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      // Only handle failures for the main frame. 
+      // This prevents minor iframe or subresource errors from blanking out the whole app.
+      if (!isMainFrame) return;
+
       console.error(`Page failed to load: ${errorDescription} (${errorCode}) at ${validatedURL}`);
       
       // -3 (ABORTED) is common during redirects, ignore it.
@@ -477,10 +482,10 @@ if (!gotTheLock) {
         const errorHtml = `
           <html>
             <body style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: #f0f2f5; margin: 0; padding: 20px; text-align: center;">
-              <h2 style="color: #1c1e21;">Messenger 載入失敗</h2>
+              <h2 style="color: #1c1e21;">${t('loadFailedTitle') || 'Messenger 載入失敗'}</h2>
               <p style="color: #65676b;">${errorDescription} (${errorCode})</p>
-              <p style="font-size: 14px; color: #8a8d91;">請檢查您的網路連線，或點擊下方按鈕重新嘗試。</p>
-              <button onclick="location.href='https://www.facebook.com/messages/'" style="padding: 12px 24px; background: #0084ff; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 16px; margin-top: 10px;">重新載入</button>
+              <p style="font-size: 14px; color: #8a8d91;">${t('loadFailedMessage') || '請檢查您的網路連線，或點擊下方按鈕重新嘗試。'}</p>
+              <button onclick="location.href='https://www.facebook.com/messages/'" style="padding: 12px 24px; background: #0084ff; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 16px; margin-top: 10px;">${t('reload') || '重新載入'}</button>
             </body>
           </html>
         `;
