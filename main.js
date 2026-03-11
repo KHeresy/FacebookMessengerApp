@@ -130,8 +130,9 @@ if (!gotTheLock) {
           shell.openExternal(data.html_url);
         }
       } else if (manual) {
-        const activeWin = BrowserWindow.getFocusedWindow() || mainWindow;
-        dialog.showMessageBox(activeWin || undefined, {
+        const focusedWin = BrowserWindow.getFocusedWindow();
+        const activeWin = (focusedWin && !focusedWin.isDestroyed()) ? focusedWin : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined);
+        dialog.showMessageBox(activeWin, {
           type: 'info',
           title: t('noUpdateAvailable'),
           message: t('latestVersionMessage'),
