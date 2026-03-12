@@ -119,10 +119,32 @@ window.addEventListener('contextmenu', (e) => {
     lastRightClickElement = e.target;
 }, true);
 
+function getMessageContainer(el) {
+    if (!el) return null;
+    
+    // Try to find the closest element that represents the message text
+    // Messenger uses dir="auto" for text containers.
+    // We want the outermost one if they are nested.
+    let current = el.closest('[dir="auto"]');
+    if (!current) return el;
+
+    let highest = current;
+    while (current.parentElement) {
+        current = current.parentElement.closest('[dir="auto"]');
+        if (current) {
+            highest = current;
+        } else {
+            break;
+        }
+    }
+    return highest;
+}
+
 ipcRenderer.on('select-all-message', () => {
-    if (lastRightClickElement) {
+    const container = getMessageContainer(lastRightClickElement);
+    if (container) {
         const range = document.createRange();
-        range.selectNodeContents(lastRightClickElement);
+        range.selectNodeContents(container);
         const selection = window.getSelection();
         selection.removeAllRanges();
         selection.addRange(range);
@@ -130,8 +152,9 @@ ipcRenderer.on('select-all-message', () => {
 });
 
 ipcRenderer.on('copy-entire-message', () => {
-    if (lastRightClickElement) {
-        const text = lastRightClickElement.innerText || lastRightClickElement.textContent || '';
+    const container = getMessageContainer(lastRightClickElement);
+    if (container) {
+        const text = container.innerText || container.textContent || '';
         if (text) ipcRenderer.send('copy-to-clipboard', text);
     }
 });
