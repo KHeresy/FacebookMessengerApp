@@ -376,6 +376,7 @@ if (!gotTheLock) {
     let lastNotifiedTitle = '';
     let lastNotificationTime = 0;
     let notificationTimer = null;
+    let redirectRetryCount = 0;
 
     const showNotification = (title) => {
       lastNotifiedTitle = title;
@@ -458,6 +459,11 @@ if (!gotTheLock) {
       mainWindow.show();
     });
 
+    // Reset retry counter on successful load
+    mainWindow.webContents.on('did-finish-load', () => {
+      redirectRetryCount = 0;
+    });
+
     // Load failure handling
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       // Only handle failures for the main frame. 
@@ -482,13 +488,18 @@ if (!gotTheLock) {
 
       // ERR_TOO_MANY_REDIRECTS: clear all storage and retry
       if (errorCode === -310) {
-        console.log('Too many redirects detected, clearing all session storage and retrying...');
-        session.defaultSession.clearStorageData().then(() => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.loadURL('https://www.messenger.com/').catch(() => {});
-          }
-        });
-        return;
+        if (redirectRetryCount < 3) {
+          redirectRetryCount++;
+          console.log(`Too many redirects detected (attempt ${redirectRetryCount}), clearing all session storage and retrying...`);
+          session.defaultSession.clearStorageData().then(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.loadURL('https://www.messenger.com/').catch(() => {});
+            }
+          });
+          return;
+        } else {
+          console.error('Too many redirects persistent after 3 retries. Falling back to error page.');
+        }
       }
 
       if (errorCode !== -3) {
