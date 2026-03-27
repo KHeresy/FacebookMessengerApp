@@ -371,11 +371,12 @@ if (!gotTheLock) {
     });
 
     // Spoof User Agent to look like regular Chrome
-    mainWindow.webContents.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    mainWindow.webContents.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
     let lastNotifiedTitle = '';
     let lastNotificationTime = 0;
     let notificationTimer = null;
+    let redirectRetryCount = 0;
 
     const showNotification = (title) => {
       lastNotifiedTitle = title;
@@ -458,6 +459,11 @@ if (!gotTheLock) {
       mainWindow.show();
     });
 
+    // Reset retry counter on successful load
+    mainWindow.webContents.on('did-finish-load', () => {
+      redirectRetryCount = 0;
+    });
+
     // Load failure handling
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       // Only handle failures for the main frame. 
@@ -469,7 +475,7 @@ if (!gotTheLock) {
       // -3 (ABORTED) is common during redirects, ignore it.
       // -102 (CONNECTION_REFUSED), -105 (NAME_NOT_RESOLVED), -106 (INTERNET_DISCONNECTED) are common at startup
       const transientErrors = [-102, -105, -106, -100, -101, -118];
-      
+
       if (transientErrors.includes(errorCode)) {
         console.log('Transient network error detected, retrying in 5 seconds...');
         setTimeout(() => {
@@ -478,6 +484,22 @@ if (!gotTheLock) {
           }
         }, 5000);
         return;
+      }
+
+      // ERR_TOO_MANY_REDIRECTS: clear all storage and retry
+      if (errorCode === -310) {
+        if (redirectRetryCount < 3) {
+          redirectRetryCount++;
+          console.log(`Too many redirects detected (attempt ${redirectRetryCount}), clearing all session storage and retrying...`);
+          session.defaultSession.clearStorageData().then(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.loadURL('https://www.messenger.com/').catch(() => {});
+            }
+          });
+          return;
+        } else {
+          console.error('Too many redirects persistent after 3 retries. Falling back to error page.');
+        }
       }
 
       if (errorCode !== -3) {
