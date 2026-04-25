@@ -17,6 +17,7 @@ if (process.platform === 'win32') {
 
 let notificationsEnabled = true;
 let checkForUpdates = true;
+let ignoredVersion = '';
 let mainWindow;
 let currentLang = 'zh-TW'; // Default language
 
@@ -34,6 +35,9 @@ function loadConfig() {
       if (config.checkForUpdates !== undefined) {
         checkForUpdates = config.checkForUpdates;
       }
+      if (config.ignoredVersion) {
+        ignoredVersion = config.ignoredVersion;
+      }
     }
   } catch (e) {
     console.error('Failed to load config:', e);
@@ -42,7 +46,7 @@ function loadConfig() {
 
 function saveConfig() {
   try {
-    const config = { language: currentLang, checkForUpdates };
+    const config = { language: currentLang, checkForUpdates, ignoredVersion };
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
   } catch (e) {
     console.error('Failed to save config:', e);
@@ -96,6 +100,9 @@ if (!gotTheLock) {
       if (!response.ok) return;
       const data = await response.json();
       const latestVersion = data.tag_name.replace(/^v/, '');
+
+      if (!manual && latestVersion === ignoredVersion) return;
+
       const currentVersion = app.getVersion();
 
       // Split by dot or hyphen to handle 1.0.7-20251223 vs 1.0.7
@@ -121,13 +128,16 @@ if (!gotTheLock) {
           type: 'info',
           title: t('updateAvailable'),
           message: t('updateMessage').replace('{version}', latestVersion),
-          buttons: [t('download'), t('later')],
+          buttons: [t('download'), t('later'), t('ignoreUpdate')],
           defaultId: 0,
           cancelId: 1
         });
 
         if (btnIndex === 0) {
           shell.openExternal(data.html_url);
+        } else if (btnIndex === 2) {
+          ignoredVersion = latestVersion;
+          saveConfig();
         }
       } else if (manual) {
         const focusedWin = BrowserWindow.getFocusedWindow();
