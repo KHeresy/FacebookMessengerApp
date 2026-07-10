@@ -8,6 +8,7 @@
 ## [v1.3.1] - 2026-07-10
 - feat: 動態生成 User-Agent，並在使用 GitHub API 檢查更新時加入 User-Agent 標頭
 - feat: 實作安全開啟外部連結機制（限制僅允許 http/https），並啟用渲染器沙盒模式 (sandbox)
+- fix: 採用嚴謹的子網域驗證機制來增強 Facebook 登入與驗證彈出視窗的安全性
 - performance: 在 preload 加入防抖 (debounce) 機制以優化 MutationObserver 的 DOM 監聽效能，降低 CPU 使用率
 
 ## [v1.3.0.20260707] - 2026-07-07

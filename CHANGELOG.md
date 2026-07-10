@@ -8,6 +8,7 @@ Note: If only the date suffix at the end of the version changes (e.g., v1.3.0.YY
 ## [v1.3.1] - 2026-07-10
 - feat: Dynamically generate User-Agent and add User-Agent header when fetching updates from GitHub API
 - feat: Implement safe URL opening checks to allow only http/https external links and enable renderer sandboxing
+- fix: Enhance Facebook authentication popup security with strict subdomain allowlisting
 - performance: Debounce DOM MutationObserver in preload script to reduce CPU usage
 
 ## [v1.3.0.20260707] - 2026-07-07

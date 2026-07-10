@@ -626,7 +626,7 @@ if (!gotTheLock) {
 
         // Allow navigation to facebook login/auth pages
         // Common paths: /login.php, /vX.X/dialog/oauth, /checkpoint, etc.
-        if (hostname.endsWith('facebook.com') &&
+        if ((hostname === 'facebook.com' || hostname.endsWith('.facebook.com')) &&
             (pathname.includes('/two_step_verification') || pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
           return;
         }
@@ -658,7 +658,7 @@ if (!gotTheLock) {
 
         // If it's a specific facebook auth link, allow it to open a popup window (standard behavior)
         // We do NOT force the main window to navigate, preventing white-out on shims.
-        if (hostname.endsWith('facebook.com') &&
+        if ((hostname === 'facebook.com' || hostname.endsWith('.facebook.com')) &&
           (pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
           return { action: 'allow' };
         }
