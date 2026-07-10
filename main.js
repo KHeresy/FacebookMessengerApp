@@ -92,11 +92,27 @@ if (!gotTheLock) {
     return langData[key] || key;
   }
 
+  // Helper to safely open external URLs (only http: and https: protocols allowed)
+  function safeOpenExternal(url) {
+    try {
+      const parsedUrl = new URL(url);
+      if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
+        shell.openExternal(url);
+      } else {
+        console.warn(`Blocked opening non-http/https external URL: ${url}`);
+      }
+    } catch (e) {
+      console.error(`Failed to parse URL for safe opening: ${url}`, e);
+    }
+  }
+
   async function checkUpdate(manual = false) {
     if (!checkForUpdates && !manual) return;
 
     try {
-      const response = await fetch('https://api.github.com/repos/KHeresy/FacebookMessengerApp/releases/latest');
+      const response = await fetch('https://api.github.com/repos/KHeresy/FacebookMessengerApp/releases/latest', {
+        headers: { 'User-Agent': 'FacebookMessengerApp' }
+      });
       if (!response.ok) return;
       const data = await response.json();
       const latestVersion = data.tag_name.replace(/^v/, '');
@@ -134,7 +150,7 @@ if (!gotTheLock) {
         });
 
         if (btnIndex === 0) {
-          shell.openExternal(data.html_url);
+          safeOpenExternal(data.html_url);
         } else if (btnIndex === 2) {
           ignoredVersion = latestVersion;
           saveConfig();
@@ -343,7 +359,7 @@ if (!gotTheLock) {
                 });
 
                 if (response === 1) {
-                  shell.openExternal('https://github.com/KHeresy/FacebookMessengerApp');
+                  safeOpenExternal('https://github.com/KHeresy/FacebookMessengerApp');
                 }
               }
             }
@@ -376,12 +392,14 @@ if (!gotTheLock) {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        sandbox: true,
         preload: path.join(__dirname, 'preload.js')
       }
     });
 
-    // Spoof User Agent to look like regular Chrome
-    mainWindow.webContents.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    // Spoof User Agent to look like regular Chrome, preserving the underlying Chrome version
+    const defaultUserAgent = mainWindow.webContents.getUserAgent();
+    mainWindow.webContents.userAgent = defaultUserAgent.replace(new RegExp(`\\s(${app.name}|Electron)/[^\\s]+`, 'g'), '');
 
     let lastNotifiedTitle = '';
     let lastNotificationTime = 0;
@@ -584,7 +602,7 @@ if (!gotTheLock) {
         menuTemplate.push({
           label: t('openInBrowser'), // Open in Browser
           click: () => {
-            shell.openExternal(params.linkURL);
+            safeOpenExternal(params.linkURL);
           }
         });
       }
@@ -608,7 +626,7 @@ if (!gotTheLock) {
 
         // Allow navigation to facebook login/auth pages
         // Common paths: /login.php, /vX.X/dialog/oauth, /checkpoint, etc.
-        if (hostname.endsWith('facebook.com') &&
+        if ((hostname === 'facebook.com' || hostname.endsWith('.facebook.com')) &&
             (pathname.includes('/two_step_verification') || pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
           return;
         }
@@ -616,7 +634,7 @@ if (!gotTheLock) {
         // For everything else (including l.facebook.com, generic facebook.com, and external sites),
         // block navigation and open externally.
         event.preventDefault();
-        shell.openExternal(url);
+        safeOpenExternal(url);
       } catch (e) {
         console.error('Navigation error:', e);
       }
@@ -640,13 +658,13 @@ if (!gotTheLock) {
 
         // If it's a specific facebook auth link, allow it to open a popup window (standard behavior)
         // We do NOT force the main window to navigate, preventing white-out on shims.
-        if (hostname.endsWith('facebook.com') &&
+        if ((hostname === 'facebook.com' || hostname.endsWith('.facebook.com')) &&
           (pathname.includes('/login') || pathname.includes('/dialog/') || pathname.includes('/checkpoint'))) {
           return { action: 'allow' };
         }
 
         // All other links (external sites, l.facebook.com redirects, etc.) -> Open in System Browser
-        shell.openExternal(url);
+        safeOpenExternal(url);
         return { action: 'deny' };
       } catch (e) {
         console.error('Window open handler error:', e);

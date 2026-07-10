@@ -1,5 +1,14 @@
 const { ipcRenderer } = require('electron');
 
+// --- Helper Functions ---
+function debounce(func, wait) {
+    let timeout;
+    return function (...args) {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), wait);
+    };
+}
+
 // --- 1. Notification Interception (Main + Service Worker) ---
 function filterNotification(title, options) {
     const lowerTitle = title ? title.toLowerCase() : '';
@@ -162,11 +171,12 @@ ipcRenderer.on('copy-entire-message', () => {
 window.addEventListener('DOMContentLoaded', () => {
     injectStyles();
     updateBadge();
-    const observer = new MutationObserver(updateBadge);
+    const debouncedUpdateBadge = debounce(updateBadge, 200);
+    const observer = new MutationObserver(debouncedUpdateBadge);
     observer.observe(document.body, { childList: true, subtree: true });
     const titleElement = document.querySelector('title');
     if (titleElement) {
-        new MutationObserver(updateBadge).observe(titleElement, { childList: true, subtree: true, characterData: true });
+        new MutationObserver(debouncedUpdateBadge).observe(titleElement, { childList: true, subtree: true, characterData: true });
     }
     setInterval(updateBadge, 2000);
 });
