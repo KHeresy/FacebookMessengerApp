@@ -96,7 +96,9 @@ if (!gotTheLock) {
     if (!checkForUpdates && !manual) return;
 
     try {
-      const response = await fetch('https://api.github.com/repos/KHeresy/FacebookMessengerApp/releases/latest');
+      const response = await fetch('https://api.github.com/repos/KHeresy/FacebookMessengerApp/releases/latest', {
+        headers: { 'User-Agent': 'FacebookMessengerApp' }
+      });
       if (!response.ok) return;
       const data = await response.json();
       const latestVersion = data.tag_name.replace(/^v/, '');
@@ -380,8 +382,9 @@ if (!gotTheLock) {
       }
     });
 
-    // Spoof User Agent to look like regular Chrome
-    mainWindow.webContents.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    // Spoof User Agent to look like regular Chrome, preserving the underlying Chrome version
+    const defaultUserAgent = mainWindow.webContents.getUserAgent();
+    mainWindow.webContents.userAgent = defaultUserAgent.replace(new RegExp(`\\s(${app.name}|Electron)/[^\\s]+`, 'g'), '');
 
     let lastNotifiedTitle = '';
     let lastNotificationTime = 0;
