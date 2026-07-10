@@ -92,6 +92,20 @@ if (!gotTheLock) {
     return langData[key] || key;
   }
 
+  // Helper to safely open external URLs (only http: and https: protocols allowed)
+  function safeOpenExternal(url) {
+    try {
+      const parsedUrl = new URL(url);
+      if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
+        shell.openExternal(url);
+      } else {
+        console.warn(`Blocked opening non-http/https external URL: ${url}`);
+      }
+    } catch (e) {
+      console.error(`Failed to parse URL for safe opening: ${url}`, e);
+    }
+  }
+
   async function checkUpdate(manual = false) {
     if (!checkForUpdates && !manual) return;
 
@@ -136,7 +150,7 @@ if (!gotTheLock) {
         });
 
         if (btnIndex === 0) {
-          shell.openExternal(data.html_url);
+          safeOpenExternal(data.html_url);
         } else if (btnIndex === 2) {
           ignoredVersion = latestVersion;
           saveConfig();
@@ -345,7 +359,7 @@ if (!gotTheLock) {
                 });
 
                 if (response === 1) {
-                  shell.openExternal('https://github.com/KHeresy/FacebookMessengerApp');
+                  safeOpenExternal('https://github.com/KHeresy/FacebookMessengerApp');
                 }
               }
             }
@@ -378,6 +392,7 @@ if (!gotTheLock) {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        sandbox: true,
         preload: path.join(__dirname, 'preload.js')
       }
     });
@@ -587,7 +602,7 @@ if (!gotTheLock) {
         menuTemplate.push({
           label: t('openInBrowser'), // Open in Browser
           click: () => {
-            shell.openExternal(params.linkURL);
+            safeOpenExternal(params.linkURL);
           }
         });
       }
@@ -619,7 +634,7 @@ if (!gotTheLock) {
         // For everything else (including l.facebook.com, generic facebook.com, and external sites),
         // block navigation and open externally.
         event.preventDefault();
-        shell.openExternal(url);
+        safeOpenExternal(url);
       } catch (e) {
         console.error('Navigation error:', e);
       }
@@ -649,7 +664,7 @@ if (!gotTheLock) {
         }
 
         // All other links (external sites, l.facebook.com redirects, etc.) -> Open in System Browser
-        shell.openExternal(url);
+        safeOpenExternal(url);
         return { action: 'deny' };
       } catch (e) {
         console.error('Window open handler error:', e);

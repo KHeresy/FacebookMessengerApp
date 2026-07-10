@@ -5,8 +5,10 @@ All notable changes to this project will be documented in this file.
 Note: If only the date suffix at the end of the version changes (e.g., v1.3.0.YYYYMMDD), it represents a release with only third-party package (Electron) updates.
 
 
-## [v1.3.1.20260710] - 2026-07-10
+## [v1.3.1] - 2026-07-10
 - feat: Dynamically generate User-Agent and add User-Agent header when fetching updates from GitHub API
+- feat: Implement safe URL opening checks to allow only http/https external links and enable renderer sandboxing
+- performance: Debounce DOM MutationObserver in preload script to reduce CPU usage
 
 ## [v1.3.0.20260707] - 2026-07-07
 - build: Bump Electron to 43.0.0 (along with other dependency updates)
@@ -14,21 +16,21 @@ Note: If only the date suffix at the end of the version changes (e.g., v1.3.0.YY
 ## [v1.3.0.20260425] - 2026-04-25
 - feat: Add option to ignore current update version in update dialog
 
-## [v1.2.2.20260327] - 2026-03-27
+## [v1.2.2] - 2026-03-27
 - fix: Resolve ERR_TOO_MANY_REDIRECTS (-310) load failure by clearing session storage and retrying
 
-## [v1.2.1.20260317] - 2026-03-17
+## [v1.2.1] - 2026-03-17
 - fix: Resolve issue where copying entire message sometimes only copies the link
 
-## [v1.2.0.20260311] - 2026-03-11
+## [v1.2.0] - 2026-03-11
 - feat: Change appId to `com.heresy.fbmessenger`
 - feat: Add "Send Test Notification" option to Debug menu
 - improve: Overall stability improvements
 
-## [v1.1.2.20260303] - 2026-03-03
+## [v1.1.2] - 2026-03-03
 - fix: Fix message selection and copying behaviors
 
-## [v1.1.1.20260302] - 2026-03-02
+## [v1.1.1] - 2026-03-02
 - improve: Decrease duplicate notifications and improve notification status check
 
 ## [v1.1.0.20260224] - 2026-02-24
