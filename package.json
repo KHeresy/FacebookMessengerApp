@@ -1,6 +1,6 @@
 {
 	"name": "fbm",
-	"version": "1.3.1",
+	"version": "1.3.2",
 	"description": "Facebook Messenger desktop app",
 	"main": "main.js",
 	"scripts": {
@@ -14,8 +14,8 @@
 		"electron-window-state": "^5.0.3"
 	},
 	"devDependencies": {
-		"electron": "latest",
-		"electron-builder": "latest"
+		"electron": "^44.1.1",
+		"electron-builder": "^26.15.3"
 	},
 	"build": {
 		"appId": "com.heresy.fbmessenger",
