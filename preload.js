@@ -89,6 +89,83 @@ function updateBadge() {
 }
 
 // --- 3. UI Cleaning & Context Menu ---
+function setTopBarVisibility(hide) {
+    let style = document.getElementById('fbm-custom-topbar-style');
+    if (hide) {
+        if (!style) {
+            style = document.createElement('style');
+            style.id = 'fbm-custom-topbar-style';
+            style.textContent = `
+                :root, :host, body, div, [class], *, *::before, *::after {
+                    --header-height: 0px !important;
+                }
+                html, html:root, body {
+                    overflow: hidden !important;
+                    overflow-y: hidden !important;
+                }
+                html::-webkit-scrollbar {
+                    display: none !important;
+                    width: 0px !important;
+                    height: 0px !important;
+                }
+                div[role="banner"], header[role="banner"], [role="banner"] {
+                    display: none !important;
+                }
+            `;
+        }
+        const target = document.documentElement || document.head;
+        if (target && !style.isConnected) {
+            target.appendChild(style);
+        }
+        if (document.documentElement) {
+            document.documentElement.style.setProperty('overflow-y', 'hidden', 'important');
+            document.documentElement.style.setProperty('overflow', 'hidden', 'important');
+        }
+        if (document.body) {
+            document.body.style.setProperty('overflow-y', 'hidden', 'important');
+            document.body.style.setProperty('overflow', 'hidden', 'important');
+        }
+    } else {
+        if (style) {
+            style.remove();
+        }
+        if (document.documentElement) {
+            document.documentElement.style.removeProperty('overflow-y');
+            document.documentElement.style.removeProperty('overflow');
+        }
+        if (document.body) {
+            document.body.style.removeProperty('overflow-y');
+            document.body.style.removeProperty('overflow');
+        }
+    }
+}
+
+let shouldHideTopBar = true;
+try {
+    const res = ipcRenderer.sendSync('get-hide-top-bar');
+    if (typeof res === 'boolean') {
+        shouldHideTopBar = res;
+    }
+} catch (e) {
+    console.error('Failed to get hide-top-bar state:', e);
+}
+
+if (shouldHideTopBar) {
+    const tryInjectInitial = () => {
+        if (document.head || document.documentElement) {
+            setTopBarVisibility(true);
+        } else {
+            requestAnimationFrame(tryInjectInitial);
+        }
+    };
+    tryInjectInitial();
+}
+
+ipcRenderer.on('toggle-top-bar', (event, hide) => {
+    shouldHideTopBar = hide;
+    setTopBarVisibility(hide);
+});
+
 function injectStyles() {
     const style = document.createElement('style');
     style.textContent = `
@@ -170,6 +247,7 @@ ipcRenderer.on('copy-entire-message', () => {
 
 window.addEventListener('DOMContentLoaded', () => {
     injectStyles();
+    setTopBarVisibility(shouldHideTopBar);
     updateBadge();
     const debouncedUpdateBadge = debounce(updateBadge, 200);
     const observer = new MutationObserver(debouncedUpdateBadge);

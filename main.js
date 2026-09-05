@@ -18,6 +18,7 @@ if (process.platform === 'win32') {
 let notificationsEnabled = true;
 let checkForUpdates = true;
 let ignoredVersion = '';
+let hideTopBar = true;
 let mainWindow;
 let currentLang = 'zh-TW'; // Default language
 
@@ -38,6 +39,9 @@ function loadConfig() {
       if (config.ignoredVersion) {
         ignoredVersion = config.ignoredVersion;
       }
+      if (config.hideTopBar !== undefined) {
+        hideTopBar = config.hideTopBar;
+      }
     }
   } catch (e) {
     console.error('Failed to load config:', e);
@@ -46,7 +50,7 @@ function loadConfig() {
 
 function saveConfig() {
   try {
-    const config = { language: currentLang, checkForUpdates, ignoredVersion };
+    const config = { language: currentLang, checkForUpdates, ignoredVersion, hideTopBar };
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
   } catch (e) {
     console.error('Failed to save config:', e);
@@ -84,6 +88,10 @@ if (!gotTheLock) {
     if (text) {
       clipboard.writeText(text);
     }
+  });
+
+  ipcMain.on('get-hide-top-bar', (event) => {
+    event.returnValue = hideTopBar;
   });
 
   // Helper to get text based on current language
@@ -274,6 +282,18 @@ if (!gotTheLock) {
             { type: 'separator' },
             { label: t('toggleFullscreen'), role: 'togglefullscreen' },
             { type: 'separator' },
+            {
+              label: t('hideTopBar'),
+              type: 'checkbox',
+              checked: hideTopBar,
+              click: (menuItem) => {
+                hideTopBar = menuItem.checked;
+                saveConfig();
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  mainWindow.webContents.send('toggle-top-bar', hideTopBar);
+                }
+              }
+            },
             {
               label: t('enableNotifications'),
               type: 'checkbox',

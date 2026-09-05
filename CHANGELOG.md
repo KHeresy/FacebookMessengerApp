@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 Note: If only the date suffix at the end of the version changes (e.g., v1.3.0.YYYYMMDD), it represents a release with only third-party package (Electron) updates.
 
 
+## [v1.4.0] - 2026-09-05
+- feat: Add "Hide Top Bar" toggle in View menu with preference persistence
+- style: Support hiding Facebook web top navigation bar and remove window-level outer scrollbar for a clean desktop experience
+- build: Bump Electron to 44.2.0
+
 ## [v1.3.2] - 2026-09-02
 - build: Upgrade build workflow to Node.js 24
 - build: Bump Electron to 44.1.1 and electron-builder to 26.15.3
