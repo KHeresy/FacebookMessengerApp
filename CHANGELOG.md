@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 Note: If only the date suffix at the end of the version changes (e.g., v1.3.0.YYYYMMDD), it represents a release with only third-party package (Electron) updates.
 
 
+## [v1.3.2] - 2026-09-02
+- build: Upgrade build workflow to Node.js 24
+- build: Bump Electron to 44.1.1 and electron-builder to 26.15.3
+- build: Pin dependency versions in package.json instead of using wildcard / latest
+
 ## [v1.3.1] - 2026-07-10
 - feat: Dynamically generate User-Agent and add User-Agent header when fetching updates from GitHub API
 - feat: Implement safe URL opening checks to allow only http/https external links and enable renderer sandboxing

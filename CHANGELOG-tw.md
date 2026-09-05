@@ -5,6 +5,11 @@
 說明：如果僅有版本號最後的日期更新（例如 v1.3.0.YYYYMMDD），代表該版本僅更新第三方套件（Electron）。
 
 
+## [v1.3.2] - 2026-09-02
+- build: 建置流程升級至 Node.js 24
+- build: 升級 Electron 至 44.1.1 與 electron-builder 至 26.15.3
+- build: 在 package.json 中指定套件版本範圍，不再使用 wildcard / latest
+
 ## [v1.3.1] - 2026-07-10
 - feat: 動態生成 User-Agent，並在使用 GitHub API 檢查更新時加入 User-Agent 標頭
 - feat: 實作安全開啟外部連結機制（限制僅允許 http/https），並啟用渲染器沙盒模式 (sandbox)
