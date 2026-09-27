@@ -217,6 +217,44 @@ test('Messenger-only mode ignores existing unread counts, groups increases, and 
   assert.equal(state.notifications.length, 1);
 });
 
+test('a full main-frame navigation resets the unread baseline before the next page reports its existing count', async () => {
+  const state = startApp();
+  await state.ready();
+  state.tick(6000);
+  state.report(0);
+  state.window.webContents.emit('did-start-navigation', {
+    isMainFrame: true,
+    isSameDocument: false
+  }, 'https://www.facebook.com/messages/t/123/', false, true);
+
+  state.tick(12000);
+  state.report(4); // Existing unread conversations on the newly loaded page.
+  state.fireTimers();
+  assert.equal(state.notifications.length, 0);
+
+  state.report(5); // A later increase is a new notification signal.
+  state.fireTimers();
+  assert.equal(state.notifications.length, 1);
+});
+
+test('same-document and subframe navigations do not discard the current unread baseline', async () => {
+  const state = startApp();
+  await state.ready();
+  state.tick(6000);
+  state.report(0);
+  state.window.webContents.emit('did-start-navigation', {
+    isMainFrame: false,
+    isSameDocument: false
+  });
+  state.window.webContents.emit('did-start-navigation', {
+    isMainFrame: true,
+    isSameDocument: true
+  });
+  state.report(1);
+  state.fireTimers();
+  assert.equal(state.notifications.length, 1);
+});
+
 test('a Messenger title change notifies when its navigation badge is unavailable', async () => {
   const state = startApp();
   await state.ready();
