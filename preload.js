@@ -9,61 +9,40 @@ function debounce(func, wait) {
     };
 }
 
-// --- 1. Notification Interception (Main + Service Worker) ---
-function filterNotification(title, options) {
-    const lowerTitle = title ? title.toLowerCase() : '';
-    const lowerBody = (options && options.body) ? options.body.toLowerCase() : '';
-    const isMessage = lowerTitle.includes('message') || lowerTitle.includes('messenger') || 
-                      lowerTitle.includes('訊息') || lowerTitle.includes('聊天室') ||
-                      lowerBody.includes('sent') || lowerBody.includes('傳送') ||
-                      lowerBody.includes('message') || lowerBody.includes('訊息');
-    const isFB = lowerTitle.includes('facebook') || lowerBody.includes('facebook');
-    if (isFB && !isMessage) return true; 
-    if (!isMessage) return true;
-    return false;
-}
-
-const OriginalNotification = window.Notification;
-const CustomNotification = function (title, options) {
-    if (filterNotification(title, options)) {
-        return { onclick: null, onshow: null, onerror: null, onclose: null, close: () => {} };
-    }
-    return new OriginalNotification(title, options);
-};
-CustomNotification.requestPermission = OriginalNotification.requestPermission;
-CustomNotification.permission = OriginalNotification.permission;
-window.Notification = CustomNotification;
-
-if ('ServiceWorkerRegistration' in window) {
-    const originalShowNotification = ServiceWorkerRegistration.prototype.showNotification;
-    ServiceWorkerRegistration.prototype.showNotification = function(title, options) {
-        if (filterNotification(title, options)) return Promise.resolve();
-        return originalShowNotification.call(this, title, options);
-    };
-}
-
-// --- 2. DOM-Only Badge Detection ---
-function getMessengerUnreadCount() {
+// --- Messenger unread badge detection ---
+// Only a numeric badge inside the Messenger navigation control is a notification
+// signal. A missing control means "unknown", not zero.
+function getMessengerUnreadSignal() {
     const messengerSelectors = [
-        'a[href^="/messages/"]',
+        'a[href="/messages/"], a[href="/messages"]',
         'div[role="button"][aria-label*="Messenger"]',
         'div[role="button"][aria-label*="訊息"]',
         'div[aria-label="Messenger"]',
         'div[aria-label="訊息"]'
     ];
     
+    let foundControl = false;
+    let ambiguousBadge = false;
     for (const selector of messengerSelectors) {
         const element = document.querySelector(selector);
         if (element) {
-            const badge = element.querySelector('span[role="gridcell"], span[aria-hidden="false"], div[style*="background-color"] span, span:not(:empty)');
-            if (badge) {
-                const count = parseInt(badge.textContent.trim(), 10);
-                if (!isNaN(count) && count > 0) return count;
+            foundControl = true;
+            const badges = element.querySelectorAll('span[role="gridcell"], span[aria-hidden="false"], div[style*="background-color"] span');
+            for (const badge of badges) {
+                const text = badge.textContent.trim();
+                if (/^\d{1,5}$/.test(text)) return Number(text);
+                if (/^\d{1,5}\+$/.test(text)) return Number(text.slice(0, -1));
+                if (text) ambiguousBadge = true;
             }
-            return 0;
         }
     }
+    return foundControl && !ambiguousBadge ? 0 : null;
+}
 
+function getMessengerUnreadCount(count = getMessengerUnreadSignal()) {
+    if (count !== null) return count;
+    // Title counts are only a visual badge fallback; Facebook can include other
+    // notifications in its title, so never use them to trigger a message alert.
     const title = document.title;
     const match = title.match(/^\((\d+)\)/);
     if (match) {
@@ -73,9 +52,102 @@ function getMessengerUnreadCount() {
     return 0;
 }
 
+// Derive an incoming-message signal from conversation rows without depending on
+// localized labels. Only compare threads already seen on this page: a newly
+// rendered old conversation is not proof that a message just arrived.
+function fingerprint(value) {
+    let hash = 2166136261;
+    for (const char of value.replace(/\s+/g, ' ').trim().slice(0, 500)) {
+        hash = Math.imul(hash ^ char.codePointAt(0), 16777619);
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function getConversationSnapshot() {
+    const threads = new Map();
+    const links = document.querySelectorAll('a[href*="/messages/t/"], a[href^="/t/"]');
+    for (const link of links) {
+        if (threads.size >= 100) break;
+        const href = link.getAttribute('href');
+        if (!href) continue;
+        let url;
+        try { url = new URL(href, location.href); } catch { continue; }
+        const match = url.pathname.match(/^\/(?:messages\/)?t\/([^/]+)\/?$/);
+        if (!match || !['www.facebook.com', 'm.facebook.com', 'www.messenger.com', 'm.messenger.com'].includes(url.hostname)) continue;
+
+        const row = link.closest('[role="row"], [role="listitem"]') || link;
+        const texts = [...row.querySelectorAll('[dir="auto"]')]
+            .filter(element => !element.querySelector('[dir="auto"]') && element.textContent.trim());
+        // The first text node is typically the conversation name; the second is
+        // the message preview. Skip rows where this structure is not present.
+        if (texts.length < 2) continue;
+        const preview = texts[1];
+        const previewText = preview.textContent.replace(/\s+/g, ' ').trim();
+        const previewHash = fingerprint(previewText);
+        const previous = knownThreads.get(match[1]);
+        let unread = previous?.unread || false;
+        // Reading computed styles on every mutation is expensive on Facebook's
+        // large DOM; only inspect a row when its preview actually changes.
+        if (!previous || previous.unread || previous.preview !== previewHash) {
+            const weight = window.getComputedStyle(preview).fontWeight;
+            unread = weight === 'bold' || weight === 'bolder' || parseInt(weight, 10) >= 600;
+        }
+        threads.set(match[1], {
+            preview: previewHash,
+            previewText: Array.from(previewText).slice(0, 160).join(''),
+            unread
+        });
+    }
+    return threads;
+}
+
+let knownThreads = new Map();
+let conversationBaselineReady = false;
+let lastConversationAvailable = null;
+function updateConversationSignals() {
+    const current = getConversationSnapshot();
+    if ((current.size > 0) !== lastConversationAvailable) {
+        lastConversationAvailable = current.size > 0;
+        console.info(`[Messenger notification] Conversation rows ${lastConversationAvailable ? 'detected' : 'unavailable'}`);
+    }
+    if (!current.size) return;
+    if (conversationBaselineReady) {
+        for (const [id, state] of current) {
+            const previous = knownThreads.get(id);
+            if (previous && state.unread && previous.preview !== state.preview) {
+                ipcRenderer.send('messenger-conversation-change', {
+                    thread: fingerprint(id),
+                    message: fingerprint(`${id}:${state.preview}`),
+                    preview: state.previewText
+                });
+            } else if (previous?.unread && !state.unread) {
+                ipcRenderer.send('messenger-conversation-read', fingerprint(id));
+            }
+        }
+    }
+    conversationBaselineReady = true;
+    // Keep only fingerprints between scans; do not retain message text.
+    for (const [id, state] of current) knownThreads.set(id, { preview: state.preview, unread: state.unread });
+    // Virtualized lists may unload rows; retain a bounded history so scrolling
+    // them back into view does not turn an old unread chat into a new alert.
+    while (knownThreads.size > 500) knownThreads.delete(knownThreads.keys().next().value);
+}
+
 let lastCount = -1;
+let lastSignal = null;
+let lastBadgeAvailable = null;
 function updateBadge() {
-    const count = getMessengerUnreadCount();
+    updateConversationSignals();
+    const signal = getMessengerUnreadSignal();
+    if ((signal !== null) !== lastBadgeAvailable) {
+        lastBadgeAvailable = signal !== null;
+        console.info(`[Messenger notification] Navigation badge ${lastBadgeAvailable ? 'available' : 'unavailable'}; title fallback ${lastBadgeAvailable ? 'optional' : 'enabled'}`);
+    }
+    if (signal !== lastSignal) {
+        lastSignal = signal;
+        ipcRenderer.send('messenger-unread-count', signal);
+    }
+    const count = getMessengerUnreadCount(signal);
     if (count !== lastCount) {
         console.log(`[Badge] Unread count: ${count}`);
         lastCount = count;
@@ -248,10 +320,11 @@ ipcRenderer.on('copy-entire-message', () => {
 window.addEventListener('DOMContentLoaded', () => {
     injectStyles();
     setTopBarVisibility(shouldHideTopBar);
+    ipcRenderer.send('register-attention-icon', drawBadge('!'));
     updateBadge();
     const debouncedUpdateBadge = debounce(updateBadge, 200);
     const observer = new MutationObserver(debouncedUpdateBadge);
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
     const titleElement = document.querySelector('title');
     if (titleElement) {
         new MutationObserver(debouncedUpdateBadge).observe(titleElement, { childList: true, subtree: true, characterData: true });
