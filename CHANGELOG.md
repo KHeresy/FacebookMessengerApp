@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Note: If only the date suffix at the end of the version changes (e.g., v1.3.0.YYYYMMDD), it represents a release with only third-party package (Electron) updates.
 
 
+## [v1.5.0] - 2026-09-27
+- feat: Add persisted notification modes for original web notifications or Messenger-only app notifications
+- feat: Detect new messages through conversation changes, with unread badges and page titles as fallback signals
+- feat: Add optional message previews and a persistent Windows taskbar unread indicator with manual clearing
+- fix: Deduplicate signals for the same message while allowing later new messages to notify again
+- build: Bump Electron to 44.4.5
+
 ## [v1.4.0] - 2026-09-05
 - feat: Add "Hide Top Bar" toggle in View menu with preference persistence
 - style: Support hiding Facebook web top navigation bar and remove window-level outer scrollbar for a clean desktop experience
