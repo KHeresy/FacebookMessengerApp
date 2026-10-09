@@ -24,6 +24,8 @@ function startApp() {
       this.webContents.getUserAgent = () => 'Chrome/123 Electron/44';
       this.webContents.getURL = () => this.url;
       this.webContents.setWindowOpenHandler = () => {};
+      this.webContents.sent = [];
+      this.webContents.send = (...args) => this.webContents.sent.push(args);
       this.webContents.loadURL = url => { this.url = url; return Promise.resolve(); };
       this.loadURL = url => this.webContents.loadURL(url);
       this.isDestroyed = () => false;
@@ -99,7 +101,7 @@ function startApp() {
     URL,
     setTimeout: (callback, delay) => {
       const id = ++nextTimer;
-      timers.set(id, { callback, delay });
+      timers.set(id, { callback, delay, due: now + delay });
       return id;
     },
     clearTimeout: id => timers.delete(id),
@@ -115,9 +117,24 @@ function startApp() {
     notifications,
     savedConfigs,
     tick: value => { now = value; },
-    fireTimers: () => {
-      for (const [id, timer] of timers) {
+    advance: duration => {
+      const target = now + duration;
+      while (true) {
+        const next = [...timers].filter(([, timer]) => timer.due <= target)
+          .sort((a, b) => a[1].due - b[1].due)[0];
+        if (!next) break;
+        const [id, timer] = next;
         timers.delete(id);
+        now = Math.max(now, timer.due);
+        timer.callback();
+      }
+      now = target;
+    },
+    fireTimers: () => {
+      for (const [id, timer] of [...timers].sort((a, b) => a[1].due - b[1].due)) {
+        if (!timers.has(id)) continue;
+        timers.delete(id);
+        now = Math.max(now, timer.due);
         timer.callback();
       }
     },
@@ -142,6 +159,14 @@ function startApp() {
         senderFrame: window.webContents.mainFrame
       }, id);
     },
+    scan: () => handlers.emit('messenger-monitoring-scan', {
+      sender: window.webContents,
+      senderFrame: window.webContents.mainFrame
+    }),
+    relay: (channel, ...args) => handlers.emit(channel, {
+      sender: window.webContents,
+      senderFrame: window.webContents.mainFrame
+    }, ...args),
     registerAttentionIcon: () => handlers.emit('register-attention-icon', {
       sender: window.webContents,
       senderFrame: window.webContents.mainFrame
@@ -150,6 +175,53 @@ function startApp() {
       sender: window.webContents,
       senderFrame: window.webContents.mainFrame
     }, { dataUrl, text })
+  };
+}
+
+function startPreload(onSend = () => {}) {
+  let now = 0;
+  let rows = [];
+  let control = null;
+  const messages = [];
+  const listeners = new Map();
+  const source = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  const context = vm.createContext({
+    require: () => ({ ipcRenderer: {
+      sendSync: () => false,
+      on: (channel, callback) => listeners.set(channel, callback),
+      send: (...args) => { messages.push(args); onSend(...args); }
+    } }),
+    window: {
+      addEventListener: () => {},
+      getComputedStyle: element => ({ fontWeight: element.fontWeight })
+    },
+    document: {
+      body: {},
+      title: 'Messenger | Facebook',
+      querySelectorAll: selector => selector.includes('/messages/t/') ? rows : (control ? [control] : []),
+      createElement: () => ({ getContext: () => ({ beginPath() {}, arc() {}, fill() {}, fillText() {} }),
+        toDataURL: () => 'data:image/png;base64,AAAA' })
+    },
+    location: { href: 'https://www.facebook.com/messages/' },
+    Date: { now: () => now },
+    URL,
+    console
+  });
+  vm.runInContext(source, context);
+  return {
+    messages,
+    tick: value => { now = value; },
+    rows: value => { rows = value; },
+    control: value => { control = value; },
+    scan: () => vm.runInContext('updateConversationSignals()', context),
+    update: () => vm.runInContext('updateBadge()', context),
+    refresh: () => listeners.get('refresh-messenger-state')(),
+    changes: () => messages.filter(([channel]) => channel === 'messenger-conversation-change'),
+    thread: (id, preview, bold) => {
+      const previewNode = { textContent: preview, fontWeight: bold ? '700' : '400', querySelector: () => null };
+      const row = { querySelectorAll: () => [{ textContent: `Name ${id}`, querySelector: () => null }, previewNode] };
+      return { preview: previewNode, getAttribute: () => `/messages/t/${id}/`, closest: () => row };
+    }
   };
 }
 
@@ -506,23 +578,34 @@ test('renderer clearing an absent badge does not erase pending attention; a posi
 test('preload only accepts numeric badges inside the Messenger control', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
   let control = null;
+  let now = 0;
   const context = vm.createContext({
     require: () => ({ ipcRenderer: { sendSync: () => false, on: () => {} } }),
     window: { addEventListener: () => {} },
-    document: { querySelector: () => control },
+    document: { querySelectorAll: () => control ? [control] : [] },
+    Date: { now: () => now },
     console
   });
   vm.runInContext(source, context);
   const signal = () => vm.runInContext('getMessengerUnreadSignal()', context);
 
   assert.equal(signal(), null);
-  control = { querySelectorAll: () => [] };
-  assert.equal(signal(), 0);
-  control = { querySelectorAll: () => [{ textContent: '2' }] };
+  let badges = [];
+  control = { querySelectorAll: () => badges };
+  assert.equal(signal(), null); // Unrecognized empty controls are not reliable zero.
+  badges = [{ textContent: '2' }];
   assert.equal(signal(), 2);
-  control = { querySelectorAll: () => [{ textContent: '99+' }] };
+  badges = [{ textContent: '99+' }];
   assert.equal(signal(), 99);
-  control = { querySelectorAll: () => [{ textContent: '2 notifications' }] };
+  badges = [{ textContent: '2 notifications' }];
+  assert.equal(signal(), null);
+  badges = [];
+  assert.equal(signal(), null);
+  now = 1499;
+  assert.equal(signal(), null);
+  now = 1500;
+  assert.equal(signal(), 0);
+  control = { querySelectorAll: () => [] }; // A replacement control needs its own evidence.
   assert.equal(signal(), null);
 });
 
@@ -587,5 +670,319 @@ test('conversation snapshots ignore initial unread, new rows and manual unread; 
   assert.notEqual(changes()[0][1].message, changes()[1][1].message);
   rows[0] = thread('123', 'Alice', 'Another incoming message', false);
   scan();
-  assert.equal(messages.filter(([channel]) => channel === 'messenger-conversation-read').length, 2);
+  // Manual mark-as-unread is now observed too, so its later outgoing/read
+  // transition is reconciled in addition to the two incoming-message reads.
+  assert.equal(messages.filter(([channel]) => channel === 'messenger-conversation-read').length, 3);
+});
+
+test('confirmed zero cancels a pending conversation toast and clears stale numeric artwork', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.tick(6000);
+  state.report(1);
+  state.badgeOverlay('data:image/png;base64,BBBB', '1');
+  state.conversationChange('aabbccdd', undefined, '00000001', 'Already read before toast');
+  state.advance(300);
+  state.report(0);
+  state.advance(3000);
+  assert.equal(state.notifications.length, 0);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+  state.badgeOverlay('data:image/png;base64,BBBB', '1');
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('a first reliable zero clears an earlier unknown title alert', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.tick(6000);
+  state.report(null);
+  state.window.emit('page-title-updated', {}, 'Message preview');
+  state.advance(1400);
+  assert.ok(state.window.overlays.at(-1).icon);
+  state.report(0);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('a focused scan acknowledges weak alerts without clearing confirmed unread conversations', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.tick(6000);
+  state.report(null);
+  state.window.emit('page-title-updated', {}, 'Message for an unidentified conversation');
+  state.advance(1400);
+  state.advance(3000);
+  state.conversationChange('aabbccdd');
+  state.advance(600);
+  state.window.focused = true;
+  state.window.emit('focus');
+  assert.equal(state.window.webContents.sent.at(-1)[0], 'refresh-messenger-state');
+  state.scan();
+  assert.ok(state.window.overlays.at(-1).icon);
+  state.conversationRead('aabbccdd');
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('a title-only alert on a conversation URL clears after focus and rescan', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.tick(6000);
+  state.report(null, 'https://www.facebook.com/messages/t/123/');
+  state.window.emit('page-title-updated', {}, 'A message from another conversation');
+  state.advance(1400);
+  state.scan(); // Background scans do not acknowledge the alert.
+  assert.ok(state.window.overlays.at(-1).icon);
+  state.window.focused = true;
+  state.window.emit('focus');
+  state.scan();
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('distinct messages during cooldown are delayed and grouped, not lost', async () => {
+  const state = startApp();
+  await state.ready();
+  state.tick(6000);
+  state.conversationChange('aabbccdd', undefined, '00000001', 'First');
+  state.advance(600);
+  state.advance(100);
+  state.conversationChange('aabbccdd', undefined, '00000002', 'Second');
+  state.conversationChange('bbccddee', undefined, '00000003', 'Third');
+  state.advance(2399);
+  assert.equal(state.notifications.length, 1);
+  state.advance(1);
+  assert.equal(state.notifications.length, 2);
+  assert.equal(state.notifications[1].body, '有新的 Messenger 訊息');
+});
+
+test('reading a cooldown message cancels its delayed toast', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.tick(6000);
+  state.conversationChange('aabbccdd', undefined, '00000001');
+  state.advance(600);
+  state.conversationChange('aabbccdd', undefined, '00000002');
+  state.conversationRead('aabbccdd');
+  state.advance(3000);
+  assert.equal(state.notifications.length, 1);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('reading one grouped conversation leaves only the remaining preview in the pending toast', async () => {
+  const state = startApp();
+  await state.ready();
+  state.tick(6000);
+  state.conversationChange('aabbccdd', undefined, '00000001', 'Read message');
+  state.conversationChange('bbccddee', undefined, '00000002', 'Still unread');
+  state.conversationRead('aabbccdd');
+  state.advance(600);
+  assert.equal(state.notifications[0].body, 'Still unread');
+});
+
+test('stable decreases reset the badge baseline but transient oscillations do not', async () => {
+  const state = startApp();
+  await state.ready();
+  state.tick(6000);
+  state.report(0);
+  state.report(5);
+  state.advance(1400);
+  state.report(3);
+  state.advance(1499);
+  state.report(5);
+  state.advance(1500);
+  assert.equal(state.notifications.length, 1);
+  state.report(3);
+  state.advance(1500);
+  state.report(4);
+  state.advance(1400);
+  assert.equal(state.notifications.length, 2);
+});
+
+test('later badge arrivals during cooldown are delayed while same-arrival hydration is coalesced', async () => {
+  const state = startApp();
+  await state.ready();
+  state.tick(6000);
+  state.report(0);
+  state.conversationChange('aabbccdd');
+  state.advance(600);
+  state.report(1); // Badge hydration of the already-notified conversation.
+  state.advance(1400);
+  assert.equal(state.notifications.length, 1);
+  state.report(2); // A later distinct unread conversation.
+  state.advance(1400);
+  assert.equal(state.notifications.length, 2);
+});
+
+test('mode switches establish a fresh badge baseline and request unchanged renderer state', async () => {
+  const state = startApp();
+  await state.ready();
+  state.tick(6000);
+  state.report(0);
+  const mode = state.menu.find(item => item.label === '檢視').submenu.find(item => item.label === '通知模式');
+  mode.submenu[0].click();
+  state.report(5);
+  mode.submenu[1].click();
+  assert.equal(state.window.webContents.sent.at(-1)[0], 'refresh-messenger-state');
+  state.report(5);
+  state.advance(2000);
+  assert.equal(state.notifications.length, 0);
+  state.report(6);
+  state.advance(1400);
+  assert.equal(state.notifications.length, 1);
+});
+
+test('confirmed read clears a lagging badge of one, but does not hide other unread conversations', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.tick(6000);
+  state.report(1);
+  state.badgeOverlay('data:image/png;base64,BBBB', '1');
+  state.conversationChange('aabbccdd');
+  state.advance(600);
+  state.conversationRead('aabbccdd');
+  state.badgeOverlay('data:image/png;base64,BBBB', '1');
+  assert.equal(state.window.overlays.at(-1).icon, null);
+  state.report(2);
+  state.badgeOverlay('data:image/png;base64,CCCC', '2');
+  assert.equal(state.window.overlays.at(-1).text, '2');
+});
+
+test('delayed unread styling detects a new preview once, but later manual unread does not', () => {
+  const state = startPreload();
+  const row = state.thread('123', 'Old message', false);
+  state.rows([row]);
+  state.scan();
+  state.tick(100);
+  row.preview.textContent = 'New incoming message';
+  state.scan();
+  state.tick(2100);
+  row.preview.fontWeight = '700';
+  state.scan();
+  state.scan();
+  assert.equal(state.changes().length, 1);
+  assert.equal(state.changes()[0][1].preview, 'New incoming message');
+  row.preview.fontWeight = '400';
+  state.scan();
+  state.tick(10000);
+  row.preview.fontWeight = '700';
+  state.scan();
+  assert.equal(state.changes().length, 1);
+});
+
+test('repeated preview transitions have distinct event identities and initial read rows reconcile retained alerts', () => {
+  const state = startPreload();
+  const row = state.thread('123', 'Hello', false);
+  state.rows([row]);
+  state.scan();
+  assert.equal(state.messages.filter(([channel]) => channel === 'messenger-conversation-read').length, 1);
+  row.preview.textContent = 'Other';
+  row.preview.fontWeight = '700';
+  state.scan();
+  row.preview.textContent = 'Hello';
+  state.scan();
+  row.preview.textContent = 'Other';
+  state.scan();
+  const changes = state.changes();
+  assert.equal(changes.length, 3);
+  assert.notEqual(changes[0][1].message, changes[2][1].message);
+});
+
+test('a visible unread conversation prevents an empty badge from reporting global zero', () => {
+  const state = startPreload();
+  let badges = [{ textContent: '1' }];
+  state.control({ querySelectorAll: () => badges });
+  const row = state.thread('123', 'Unread', true);
+  state.rows([row]);
+  state.update();
+  badges = [];
+  state.update();
+  state.tick(2000);
+  state.update();
+  assert.equal(state.messages.filter(([channel]) => channel === 'messenger-unread-count').at(-1)[1], null);
+  row.preview.fontWeight = '400';
+  state.update();
+  assert.equal(state.messages.filter(([channel]) => channel === 'messenger-unread-count').at(-1)[1], 0);
+});
+
+test('renderer refresh reconciles confirmed reads and weak alerts together after returning to Messenger', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.tick(6000);
+  const preload = startPreload((...args) => state.relay(...args));
+  const row = preload.thread('123', 'Earlier', false);
+  preload.rows([row]);
+  preload.update();
+  state.window.emit('page-title-updated', {}, 'Unidentified new message');
+  state.advance(1400);
+  state.advance(3000);
+  row.preview.textContent = 'Confirmed incoming';
+  row.preview.fontWeight = '700';
+  preload.update();
+  state.advance(600);
+  assert.equal(state.notifications.length, 2);
+  state.window.focused = true;
+  state.window.emit('focus');
+  preload.refresh();
+  assert.ok(state.window.overlays.at(-1).icon); // Confirmed unread survives acknowledgement.
+  row.preview.fontWeight = '400';
+  preload.refresh();
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('full navigation invalidates cooldown toasts while fresh read observations clear retained attention', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.tick(6000);
+  state.conversationChange('aabbccdd', undefined, '00000001');
+  state.advance(600);
+  state.conversationChange('bbccddee', undefined, '00000002');
+  state.window.webContents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+  state.advance(6000);
+  assert.equal(state.notifications.length, 1);
+  state.conversationRead('aabbccdd');
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('disabling notifications keeps rescans and stale renderer badges from restoring app alerts', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.tick(6000);
+  state.report(1);
+  state.badgeOverlay('data:image/png;base64,BBBB', '1');
+  const enabled = state.menu.find(item => item.label === '檢視').submenu.find(item => item.label === '啟用背景通知');
+  enabled.click({ checked: false });
+  state.report(1);
+  state.badgeOverlay('data:image/png;base64,BBBB', '1');
+  state.conversationChange('aabbccdd');
+  state.advance(3000);
+  assert.equal(state.notifications.length, 0);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('a late conversation signal refines a badge toast while its next distinct message still queues', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.tick(6000);
+  state.report(0);
+  state.report(1);
+  state.advance(1400);
+  state.advance(100);
+  state.conversationChange('aabbccdd', undefined, '00000001');
+  state.advance(700);
+  assert.equal(state.notifications.length, 1);
+  state.conversationChange('aabbccdd', undefined, '00000002', 'A distinct next message');
+  state.advance(1699);
+  assert.equal(state.notifications.length, 1);
+  state.advance(1);
+  assert.equal(state.notifications.length, 2);
+  state.conversationRead('aabbccdd');
+  assert.equal(state.window.overlays.at(-1).icon, null);
 });

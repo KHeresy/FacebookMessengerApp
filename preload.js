@@ -11,7 +11,10 @@ function debounce(func, wait) {
 
 // --- Messenger unread badge detection ---
 // Only a numeric badge inside the Messenger navigation control is a notification
-// signal. A missing control means "unknown", not zero.
+// signal. A missing/unrecognized control means "unknown", not zero. An absent
+// badge is only evidence of zero after this same control exposed a numeric badge.
+const recognizedBadgeControls = new WeakSet();
+let zeroBadgeSince = null;
 function getMessengerUnreadSignal() {
     const messengerSelectors = [
         'a[href="/messages/"], a[href="/messages"]',
@@ -21,22 +24,35 @@ function getMessengerUnreadSignal() {
         'div[aria-label="訊息"]'
     ];
     
-    let foundControl = false;
+    let recognizedControl = false;
     let ambiguousBadge = false;
     for (const selector of messengerSelectors) {
-        const element = document.querySelector(selector);
-        if (element) {
-            foundControl = true;
+        for (const element of document.querySelectorAll(selector)) {
+            if (recognizedBadgeControls.has(element)) recognizedControl = true;
             const badges = element.querySelectorAll('span[role="gridcell"], span[aria-hidden="false"], div[style*="background-color"] span');
             for (const badge of badges) {
                 const text = badge.textContent.trim();
-                if (/^\d{1,5}$/.test(text)) return Number(text);
-                if (/^\d{1,5}\+$/.test(text)) return Number(text.slice(0, -1));
+                if (/^\d{1,5}\+?$/.test(text)) {
+                    recognizedBadgeControls.add(element);
+                    recognizedControl = true;
+                    const count = Number(text.replace('+', ''));
+                    if (count > 0) {
+                        zeroBadgeSince = null;
+                        return count;
+                    }
+                    // Explicit zero also needs to survive transient hydration.
+                    continue;
+                }
                 if (text) ambiguousBadge = true;
             }
         }
     }
-    return foundControl && !ambiguousBadge ? 0 : null;
+    if (!recognizedControl || ambiguousBadge) {
+        zeroBadgeSince = null;
+        return null;
+    }
+    if (zeroBadgeSince === null) zeroBadgeSince = Date.now();
+    return Date.now() - zeroBadgeSince >= 1500 ? 0 : null;
 }
 
 function getMessengerUnreadCount(count = getMessengerUnreadSignal()) {
@@ -84,14 +100,10 @@ function getConversationSnapshot() {
         const preview = texts[1];
         const previewText = preview.textContent.replace(/\s+/g, ' ').trim();
         const previewHash = fingerprint(previewText);
-        const previous = knownThreads.get(match[1]);
-        let unread = previous?.unread || false;
-        // Reading computed styles on every mutation is expensive on Facebook's
-        // large DOM; only inspect a row when its preview actually changes.
-        if (!previous || previous.unread || previous.preview !== previewHash) {
-            const weight = window.getComputedStyle(preview).fontWeight;
-            unread = weight === 'bold' || weight === 'bolder' || parseInt(weight, 10) >= 600;
-        }
+        // Preview text and unread styling can arrive in separate DOM updates.
+        // Always recheck visible rows, including previously read conversations.
+        const weight = window.getComputedStyle(preview).fontWeight;
+        const unread = weight === 'bold' || weight === 'bolder' || parseInt(weight, 10) >= 600;
         threads.set(match[1], {
             preview: previewHash,
             previewText: Array.from(previewText).slice(0, 160).join(''),
@@ -104,41 +116,58 @@ function getConversationSnapshot() {
 let knownThreads = new Map();
 let conversationBaselineReady = false;
 let lastConversationAvailable = null;
+let visibleUnread = false;
+let refreshReadStates = false;
 function updateConversationSignals() {
     const current = getConversationSnapshot();
+    visibleUnread = [...current.values()].some(state => state.unread);
     if ((current.size > 0) !== lastConversationAvailable) {
         lastConversationAvailable = current.size > 0;
         console.info(`[Messenger notification] Conversation rows ${lastConversationAvailable ? 'detected' : 'unavailable'}`);
     }
     if (!current.size) return;
-    if (conversationBaselineReady) {
-        for (const [id, state] of current) {
-            const previous = knownThreads.get(id);
-            if (previous && state.unread && previous.preview !== state.preview) {
+    const now = Date.now();
+    for (const [id, state] of current) {
+        const previous = knownThreads.get(id);
+        let revision = previous?.revision || 0;
+        let pendingUntil = previous?.pendingUntil || 0;
+        if (previous && previous.preview !== state.preview) {
+            revision++;
+            pendingUntil = now + 4000;
+        }
+        if (conversationBaselineReady && previous) {
+            if (state.unread && pendingUntil > now) {
                 ipcRenderer.send('messenger-conversation-change', {
                     thread: fingerprint(id),
-                    message: fingerprint(`${id}:${state.preview}`),
+                    message: fingerprint(`${id}:${state.preview}:${revision}`),
                     preview: state.previewText
                 });
-            } else if (previous?.unread && !state.unread) {
-                ipcRenderer.send('messenger-conversation-read', fingerprint(id));
+                pendingUntil = 0;
             }
         }
+        // Initial read observations also reconcile alerts retained across a full
+        // reload. Visible rows are evidence; an unloaded row is never "read".
+        if (!state.unread && (!previous || previous.unread || refreshReadStates)) {
+            ipcRenderer.send('messenger-conversation-read', fingerprint(id));
+        }
+        // Retain only fingerprints and detection metadata, never message text.
+        knownThreads.set(id, { preview: state.preview, unread: state.unread, revision, pendingUntil });
     }
     conversationBaselineReady = true;
-    // Keep only fingerprints between scans; do not retain message text.
-    for (const [id, state] of current) knownThreads.set(id, { preview: state.preview, unread: state.unread });
+    refreshReadStates = false;
     // Virtualized lists may unload rows; retain a bounded history so scrolling
     // them back into view does not turn an old unread chat into a new alert.
     while (knownThreads.size > 500) knownThreads.delete(knownThreads.keys().next().value);
 }
 
 let lastCount = -1;
-let lastSignal = null;
+let lastSignal;
 let lastBadgeAvailable = null;
 function updateBadge() {
     updateConversationSignals();
-    const signal = getMessengerUnreadSignal();
+    const badgeSignal = getMessengerUnreadSignal();
+    // A visible unread conversation contradicts an empty navigation badge.
+    const signal = badgeSignal === 0 && visibleUnread ? null : badgeSignal;
     if ((signal !== null) !== lastBadgeAvailable) {
         lastBadgeAvailable = signal !== null;
         console.info(`[Messenger notification] Navigation badge ${lastBadgeAvailable ? 'available' : 'unavailable'}; title fallback ${lastBadgeAvailable ? 'optional' : 'enabled'}`);
@@ -158,7 +187,17 @@ function updateBadge() {
             ipcRenderer.send('update-badge', { dataUrl: null, text: '' });
         }
     }
+    ipcRenderer.send('messenger-monitoring-scan');
 }
+
+ipcRenderer.on('refresh-messenger-state', () => {
+    // Re-report even unchanged values after mode switches or focus. A scan must
+    // precede acknowledging weak alerts, so confirmed conversation reads win.
+    lastSignal = undefined;
+    lastCount = -1;
+    refreshReadStates = true;
+    if (document.body) updateBadge();
+});
 
 // --- 3. UI Cleaning & Context Menu ---
 function setTopBarVisibility(hide) {
@@ -324,7 +363,10 @@ window.addEventListener('DOMContentLoaded', () => {
     updateBadge();
     const debouncedUpdateBadge = debounce(updateBadge, 200);
     const observer = new MutationObserver(debouncedUpdateBadge);
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    observer.observe(document.body, {
+        childList: true, subtree: true, characterData: true, attributes: true,
+        attributeFilter: ['class', 'style', 'aria-label', 'aria-selected', 'aria-current']
+    });
     const titleElement = document.querySelector('title');
     if (titleElement) {
         new MutationObserver(debouncedUpdateBadge).observe(titleElement, { childList: true, subtree: true, characterData: true });
