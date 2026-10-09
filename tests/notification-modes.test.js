@@ -271,7 +271,6 @@ test('the two modes are exclusive and persisted; web permissions follow the glob
   state.tick(6000);
   state.report(0);
   state.report(1);
-  state.window.emit('page-title-updated', {}, 'Sent you a message');
   state.fireTimers();
   assert.equal(state.notifications.length, 0);
 
@@ -354,76 +353,38 @@ test('same-document and subframe navigations do not discard the current unread b
   assert.equal(state.notifications.length, 1);
 });
 
-test('a Messenger title change notifies when its navigation badge is unavailable', async () => {
+test('page title updates do not trigger Messenger-only notifications', async () => {
   const state = startApp();
   await state.ready();
   state.tick(6000);
   state.report(null, 'https://www.facebook.com/messages/t/123/');
-  const title = value => state.window.emit('page-title-updated', {}, value);
-
-  title('Messenger | Facebook');
-  title('(1) Messenger | Facebook');
-  title('(1) Someone');
+  state.window.emit('page-title-updated', {}, 'Sent you a message');
+  state.window.emit('page-title-updated', {}, 'Another message');
   state.fireTimers();
   assert.equal(state.notifications.length, 0);
-
-  title('Sent you a message');
-  state.fireTimers();
-  assert.equal(state.notifications.length, 1);
-
-  title('Another message'); // The same arrival should not produce a second alert.
-  state.fireTimers();
-  assert.equal(state.notifications.length, 1);
-
-  state.tick(10000);
-  state.window.url = 'https://www.facebook.com/notifications/';
-  title('Some other Facebook activity');
-  state.fireTimers();
-  assert.equal(state.notifications.length, 1);
-
-  state.window.url = 'https://www.facebook.com/messages/t/123/';
-  state.window.focused = true;
-  title('A focused conversation');
-  state.fireTimers();
-  assert.equal(state.notifications.length, 1);
-
-  state.window.focused = false;
-  title('An incoming message');
-  state.window.emit('focus');
-  state.fireTimers();
-  assert.equal(state.notifications.length, 1);
 });
 
-test('badge and title signals for the same Messenger arrival produce one alert', async () => {
+test('badge count increases notify without relying on page titles', async () => {
   const state = startApp();
   await state.ready();
   state.tick(6000);
   state.report(0);
   state.report(1);
-  state.window.emit('page-title-updated', {}, 'Sent you a message');
   state.fireTimers();
   assert.equal(state.notifications.length, 1);
 
-  state.tick(10000);
-  state.report(null);
-  state.window.emit('page-title-updated', {}, 'New message');
-  state.fireTimers();
-  assert.equal(state.notifications.length, 1);
-  state.window.clearUnreadAttention();
-  state.tick(12000);
-  state.window.emit('page-title-updated', {}, 'Another new message');
+  state.report(2);
   state.fireTimers();
   assert.equal(state.notifications.length, 2);
 });
 
-test('conversation changes win over badge and title signals without leaking message text', async () => {
+test('conversation changes win over badge signals without leaking message text', async () => {
   const state = startApp();
   await state.ready();
   state.tick(6000);
   state.report(0);
   state.conversationChange('aabbccdd');
   state.report(1, 'https://www.facebook.com/messages/t/123/');
-  state.window.emit('page-title-updated', {}, 'Someone sent a message');
   state.fireTimers();
   assert.equal(state.notifications.length, 1);
   assert.equal(state.notifications[0].body, '有新的 Messenger 訊息');
@@ -454,7 +415,6 @@ test('an unread alert persists after focus while a distinct new conversation sti
   state.window.emit('focus');
   assert.equal(state.window.overlays.at(-1).icon.dataUrl, 'data:image/png;base64,AAAA');
   state.tick(12000);
-  state.window.emit('page-title-updated', {}, 'Another message while unread');
   state.conversationChange('bbccddee', 'https://www.facebook.com/messages/t/123/', '00000001');
   state.fireTimers();
   assert.equal(state.notifications.length, 2);
@@ -547,20 +507,15 @@ test('verified conversation notifications show a bounded preview and respect the
   assert.equal(Array.from(state.notifications[3].body).length, 160);
 });
 
-test('unmatched and grouped signals use generic text rather than a misleading preview', async () => {
+test('grouped conversations use generic text rather than a misleading preview', async () => {
   const state = startApp();
   await state.ready();
   state.tick(6000);
-  state.window.url = 'https://www.facebook.com/messages/';
-  state.window.emit('page-title-updated', {}, 'Message without a verified preview');
-  state.fireTimers();
-  assert.equal(state.notifications[0].body, '有新的 Messenger 訊息');
-
-  state.tick(11000);
   state.conversationChange('aabbccdd', undefined, '00000001', 'First message');
   state.conversationChange('bbccddee', undefined, '00000002', 'Second message');
   state.fireTimers();
-  assert.equal(state.notifications[1].body, '有新的 Messenger 訊息');
+  assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].body, '有新的 Messenger 訊息');
 });
 
 test('a higher Messenger unread count can notify while the previous alert is still pending', async () => {
@@ -583,38 +538,15 @@ test('a higher Messenger unread count can notify while the previous alert is sti
   assert.equal(state.notifications.length, 2);
 });
 
-test('title-only alerts stay visible until explicitly dismissed', async () => {
-  const state = startApp();
-  await state.ready();
-  state.registerAttentionIcon();
-  state.tick(6000);
-  state.window.url = 'https://www.facebook.com/messages/';
-  state.window.emit('page-title-updated', {}, 'Message preview');
-  state.fireTimers();
-  state.tick(12000);
-  state.window.emit('page-title-updated', {}, 'Another preview');
-  state.fireTimers();
-  assert.equal(state.notifications.length, 2);
-  assert.ok(state.window.overlays.at(-1).icon);
-
-  state.badgeOverlay('data:image/png;base64,BBBB', '3');
-  const view = state.menu.find(item => item.label === '檢視');
-  view.submenu.find(item => item.label === '清除未讀提示').click();
-  assert.equal(state.window.overlays.at(-1).icon, null);
-  state.tick(16000);
-  state.window.emit('page-title-updated', {}, 'Fresh message');
-  state.fireTimers();
-  assert.equal(state.notifications.length, 3);
-});
-
 test('renderer clearing an absent badge does not erase pending attention; a positive unread count returning to zero does', async () => {
   const state = startApp();
   await state.ready();
   state.registerAttentionIcon();
   state.tick(6000);
-  state.window.url = 'https://www.facebook.com/messages/';
-  state.window.emit('page-title-updated', {}, 'New message');
+  state.report(0);
+  state.report(1);
   state.fireTimers();
+  assert.equal(state.notifications.length, 1);
   state.badgeOverlay(null, '');
   assert.equal(state.window.overlays.at(-1).icon.dataUrl, 'data:image/png;base64,AAAA');
 
@@ -751,17 +683,18 @@ test('confirmed zero cancels a pending conversation toast and clears stale numer
   assert.equal(state.window.overlays.at(-1).icon, null);
 });
 
-test('a first reliable zero clears an earlier unknown title alert', async () => {
+test('a confirmed zero cancels a pending badge alert', async () => {
   const state = startApp();
   await state.ready();
   state.registerAttentionIcon();
   state.tick(6000);
-  state.report(null);
-  state.window.emit('page-title-updated', {}, 'Message preview');
-  state.advance(1400);
-  assert.ok(state.window.overlays.at(-1).icon);
+  state.report(0);
+  state.report(1);
+  state.advance(500);
   state.report(0);
   assert.equal(state.window.overlays.at(-1).icon, null);
+  state.advance(2000);
+  assert.equal(state.notifications.length, 0);
 });
 
 test('a focused scan acknowledges weak alerts without clearing confirmed unread conversations', async () => {
@@ -769,8 +702,8 @@ test('a focused scan acknowledges weak alerts without clearing confirmed unread 
   await state.ready();
   state.registerAttentionIcon();
   state.tick(6000);
-  state.report(null);
-  state.window.emit('page-title-updated', {}, 'Message for an unidentified conversation');
+  state.report(0);
+  state.report(1);
   state.advance(1400);
   state.advance(3000);
   state.conversationChange('aabbccdd');
@@ -784,13 +717,13 @@ test('a focused scan acknowledges weak alerts without clearing confirmed unread 
   assert.equal(state.window.overlays.at(-1).icon, null);
 });
 
-test('a title-only alert on a conversation URL clears after focus and rescan', async () => {
+test('a weak badge alert on a conversation URL clears after focus and rescan', async () => {
   const state = startApp();
   await state.ready();
   state.registerAttentionIcon();
   state.tick(6000);
-  state.report(null, 'https://www.facebook.com/messages/t/123/');
-  state.window.emit('page-title-updated', {}, 'A message from another conversation');
+  state.report(0, 'https://www.facebook.com/messages/t/123/');
+  state.report(1, 'https://www.facebook.com/messages/t/123/');
   state.advance(1400);
   state.scan(); // Background scans do not acknowledge the alert.
   assert.ok(state.window.overlays.at(-1).icon);
@@ -978,14 +911,11 @@ test('renderer refresh does not restore taskbar artwork when no unread blue dot 
   preload.update();
   preload.tick(1500);
   preload.update();
-  state.window.emit('page-title-updated', {}, 'Unidentified new message');
-  state.advance(1400);
-  state.advance(3000);
   row.preview.textContent = 'Confirmed incoming';
   row.preview.fontWeight = '700';
   preload.update();
   state.advance(600);
-  assert.equal(state.notifications.length, 2);
+  assert.equal(state.notifications.length, 1);
   state.window.focused = true;
   state.window.emit('focus');
   preload.refresh();

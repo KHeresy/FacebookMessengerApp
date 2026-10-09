@@ -169,13 +169,6 @@ if (!gotTheLock) {
     }
   }
 
-  function isMessageTitle(title) {
-    const value = typeof title === 'string' ? title.trim() : '';
-    return Boolean(value) && !/^\(\d+\)/.test(value) &&
-      !/^(Messenger|Facebook|Messages)(\s*\|\s*Facebook)?$/i.test(value) &&
-      !/\|\s*Facebook$/i.test(value);
-  }
-
   function isFacebookOrigin(url) {
     try {
       const { hostname, protocol } = new URL(url);
@@ -584,14 +577,12 @@ if (!gotTheLock) {
     const pendingMessages = new Map();
     let notificationGeneration = 0;
     let lastNotifiedAt = -Infinity;
-    let lastStrongSignalAt = -Infinity;
     let lastConversationSignalAt = -Infinity;
     let lastBadgeToastAt = -Infinity;
     let badgeRefinementCredits = 0;
     let lastBadgeNotifiedCount = 0;
     let badgeDecreaseTimer = null;
     const seenMessages = new Map();
-    const seenTitles = new Map();
     let monitoringReadyAt = Date.now() + 5000;
     let redirectRetryCount = 0;
     let badgeIcon = null;
@@ -714,12 +705,10 @@ if (!gotTheLock) {
       observedUnreadCount = null;
       lastBadgeNotifiedCount = 0;
       lastNotifiedAt = -Infinity;
-      lastStrongSignalAt = -Infinity;
       lastConversationSignalAt = -Infinity;
       lastBadgeToastAt = -Infinity;
       badgeRefinementCredits = 0;
       seenMessages.clear();
-      seenTitles.clear();
       updateTaskbarOverlay();
       if (refresh) mainWindow.webContents.send('refresh-messenger-state');
     };
@@ -737,7 +726,6 @@ if (!gotTheLock) {
         if (seenMessages.has(messageKey) && now - seenMessages.get(messageKey) < 10000) return;
         seenMessages.set(messageKey, now);
         if (seenMessages.size > 500) seenMessages.delete(seenMessages.keys().next().value);
-        lastStrongSignalAt = now;
         lastConversationSignalAt = now;
         // A late conversation snapshot can identify a badge-only toast that
         // just appeared. Upgrade its read tracking instead of showing it twice.
@@ -753,22 +741,15 @@ if (!gotTheLock) {
       } else if (source === 'badge') {
         if (observedUnreadCount <= lastBadgeNotifiedCount) return;
         lastBadgeNotifiedCount = observedUnreadCount;
-        lastStrongSignalAt = now;
         // Badge hydration shortly after a conversation toast is commonly the
         // same arrival, rather than a second message. Later badge-only increases
         // still use the delayed queue.
         if (!notificationTimer && now - lastConversationSignalAt < 1400) return;
-      } else {
-        if (seenTitles.has(value) && now - seenTitles.get(value) < 30000) return;
-        seenTitles.set(value, now);
-        if (seenTitles.size > 100) seenTitles.delete(seenTitles.keys().next().value);
-        if (now - lastStrongSignalAt < 5000 || now - lastNotifiedAt < 2500) return;
       }
 
-      // A conversation change, badge increase and title change can describe the
-      // same arrival. Prefer a known conversation over the weaker signals.
+      // A conversation change and badge increase can describe the same arrival.
+      // Prefer a known conversation over the weaker badge signal.
       if (pendingSignal === 'conversation' && source !== 'conversation') return;
-      if (pendingSignal === 'badge' && source === 'title') return;
       if (pendingSignal === 'conversation' && source === 'conversation' && notificationTimer) {
         pendingMessages.set(messageKey, { thread: value, preview });
         return;
@@ -800,7 +781,7 @@ if (!gotTheLock) {
           if (signal === 'conversation') {
             for (const { thread } of pendingMessages.values()) unreadThreads.add(thread);
           } else {
-            // A title/badge does not identify the receiving conversation.
+            // A badge does not identify the receiving conversation.
             weakAttention = true;
             if (signal === 'badge') {
               lastBadgeToastAt = Date.now();
@@ -897,13 +878,6 @@ if (!gotTheLock) {
       blueDotUnread = hasBlueDot;
       updateTaskbarOverlay();
     };
-
-    // Facebook may not render the navigation badge in Messenger's conversation UI.
-    // Restore the original title-based signal, but only on Messenger conversation pages.
-    mainWindow.on('page-title-updated', (event, title) => {
-      if (!isMessengerConversationPage(mainWindow.webContents.getURL()) || !isMessageTitle(title)) return;
-      queueMessengerNotification('title', title.trim());
-    });
 
     mainWindow.on('focus', () => {
       mainWindow.resetMessengerNotification();

@@ -8,8 +8,10 @@ Note: If only the date suffix at the end of the version changes (e.g., v1.3.0.YY
 ## [v1.6.0] - 2026-10-10
 - improve: Drive Windows taskbar unread artwork from conversation blue dots, with a stable clear delay and unavailable-list state preservation
 - fix: Scan blue dots independently of preview parsing and keep queued preview notifications when dismissing the taskbar indicator
+- fix: Remove page-title-based notification fallback to prevent repeated generic alerts for existing unread messages
 - refactor: Centralize main-frame IPC validation and remove redundant selectors
 - test: Expand notification coverage to 47 cases for blue-dot monitoring, dismissal, unavailable lists and IPC validation
+- test: Verify page-title changes do not trigger Messenger notifications
 
 ## [v1.5.2] - 2026-10-09
 - fix: Include Facebook end-to-end encrypted `/messages/e2ee/t/` conversations in row discovery and notification IPC validation
