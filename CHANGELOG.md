@@ -6,11 +6,12 @@ Note: If only the date suffix at the end of the version changes (e.g., v1.3.0.YY
 
 
 ## [v1.5.1] - 2026-10-09
+- fix: Recognize trailing blue unread dots in conversation layouts with regular-weight previews, including delayed dot updates
 - fix: Detect unread styling that updates after message previews and distinguish repeated preview transitions
 - fix: Reset badge notification baselines after stable decreases and delay distinct arrivals during toast cooldown
 - fix: Cancel pending notifications on confirmed read/zero unread and prevent stale badges from restoring cleared app alerts
 - improve: Acknowledge unidentified title/badge alerts after a focused rescan, validate empty badge signals, and refresh state on mode changes
-- test: Expand notification coverage to 34 cases, including renderer/main-process reconciliation and timed races
+- test: Expand notification coverage to 38 cases, including blue-dot detection, renderer/main-process reconciliation and timed races
 
 ## [v1.5.0] - 2026-09-27
 - feat: Add persisted notification modes for original web notifications or Messenger-only app notifications

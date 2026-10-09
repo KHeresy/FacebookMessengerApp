@@ -79,6 +79,39 @@ function fingerprint(value) {
     return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
+function hasUnreadDot(row) {
+    // Some Messenger layouts use a blue dot instead of bold preview text. Scope
+    // the visual fallback to a small, empty circle on the trailing side of one
+    // conversation row; avatar presence dots and blue buttons are not unread.
+    const rowRect = row.getBoundingClientRect();
+    if (rowRect.width <= 0 || rowRect.height <= 0) return false;
+    const rtl = window.getComputedStyle(row).direction === 'rtl';
+    const candidates = row.querySelectorAll('span, div');
+    for (const element of candidates) {
+        if (element.textContent.trim()) continue;
+        const rect = element.getBoundingClientRect();
+        if (rect.width < 6 || rect.width > 16 || rect.height < 6 || rect.height > 16 ||
+            Math.abs(rect.width - rect.height) > 2 ||
+            (rtl ? rect.right > rowRect.left + rowRect.width * 0.3 : rect.left < rowRect.left + rowRect.width * 0.7) ||
+            rect.left < rowRect.left - 1 || rect.right > rowRect.right + 1 ||
+            rect.top < rowRect.top || rect.bottom > rowRect.bottom) continue;
+        const style = window.getComputedStyle(element);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) continue;
+        const color = style.backgroundColor.match(/^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/);
+        if (!color) continue;
+        const [, red, green, blue] = color.map(Number);
+        const alpha = color[4] === undefined ? 1 : Number(color[4]);
+        if (alpha < 0.8 || blue < 150 || blue - red < 80 || blue - green < 40) continue;
+        const rounded = ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius']
+            .every(property => {
+                const radius = style[property];
+                return radius.endsWith('%') ? parseFloat(radius) >= 45 : parseFloat(radius) >= Math.min(rect.width, rect.height) * 0.45;
+            });
+        if (rounded) return true;
+    }
+    return false;
+}
+
 function getConversationSnapshot() {
     const threads = new Map();
     const links = document.querySelectorAll('a[href*="/messages/t/"], a[href^="/t/"]');
@@ -103,11 +136,14 @@ function getConversationSnapshot() {
         // Preview text and unread styling can arrive in separate DOM updates.
         // Always recheck visible rows, including previously read conversations.
         const weight = window.getComputedStyle(preview).fontWeight;
-        const unread = weight === 'bold' || weight === 'bolder' || parseInt(weight, 10) >= 600;
+        const boldPreview = weight === 'bold' || weight === 'bolder' || parseInt(weight, 10) >= 600;
+        const unreadDot = !boldPreview && hasUnreadDot(row);
+        const unread = boldPreview || unreadDot;
         threads.set(match[1], {
             preview: previewHash,
             previewText: Array.from(previewText).slice(0, 160).join(''),
-            unread
+            unread,
+            unreadSource: boldPreview ? 'preview-weight' : (unreadDot ? 'blue-dot' : 'none')
         });
     }
     return threads;
@@ -137,6 +173,7 @@ function updateConversationSignals() {
         }
         if (conversationBaselineReady && previous) {
             if (state.unread && pendingUntil > now) {
+                console.info(`[Messenger notification] Conversation arrival detected (${state.unreadSource})`);
                 ipcRenderer.send('messenger-conversation-change', {
                     thread: fingerprint(id),
                     message: fingerprint(`${id}:${state.preview}:${revision}`),
@@ -148,6 +185,7 @@ function updateConversationSignals() {
         // Initial read observations also reconcile alerts retained across a full
         // reload. Visible rows are evidence; an unloaded row is never "read".
         if (!state.unread && (!previous || previous.unread || refreshReadStates)) {
+            if (previous?.unread) console.info('[Messenger notification] Conversation read detected');
             ipcRenderer.send('messenger-conversation-read', fingerprint(id));
         }
         // Retain only fingerprints and detection metadata, never message text.

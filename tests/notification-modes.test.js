@@ -193,7 +193,7 @@ function startPreload(onSend = () => {}) {
     } }),
     window: {
       addEventListener: () => {},
-      getComputedStyle: element => ({ fontWeight: element.fontWeight })
+      getComputedStyle: element => ({ fontWeight: element.fontWeight, ...element.style })
     },
     document: {
       body: {},
@@ -219,8 +219,24 @@ function startPreload(onSend = () => {}) {
     changes: () => messages.filter(([channel]) => channel === 'messenger-conversation-change'),
     thread: (id, preview, bold) => {
       const previewNode = { textContent: preview, fontWeight: bold ? '700' : '400', querySelector: () => null };
-      const row = { querySelectorAll: () => [{ textContent: `Name ${id}`, querySelector: () => null }, previewNode] };
-      return { preview: previewNode, getAttribute: () => `/messages/t/${id}/`, closest: () => row };
+      const row = {
+        dots: [],
+        style: { direction: 'ltr' },
+        getBoundingClientRect: () => ({ left: 0, right: 280, top: 0, bottom: 72, width: 280, height: 72 }),
+        querySelectorAll: selector => selector === '[dir="auto"]' ?
+          [{ textContent: `Name ${id}`, querySelector: () => null }, previewNode] : row.dots
+      };
+      return { row, preview: previewNode, getAttribute: () => `/messages/t/${id}/`, closest: () => row };
+    },
+    dot: (options = {}) => {
+      const { left = 254, top = 30, size = 12, color = 'rgb(0, 100, 230)', radius = '50%',
+        text = '', display = 'block', visibility = 'visible', opacity = '1' } = options;
+      return {
+        textContent: text,
+        getBoundingClientRect: () => ({ left, right: left + size, top, bottom: top + size, width: size, height: size }),
+        style: { backgroundColor: color, display, visibility, opacity,
+          borderTopLeftRadius: radius, borderTopRightRadius: radius, borderBottomLeftRadius: radius, borderBottomRightRadius: radius }
+      };
     }
   };
 }
@@ -616,7 +632,8 @@ test('conversation snapshots ignore initial unread, new rows and manual unread; 
   function thread(id, name, preview, bold) {
     const nameNode = { textContent: name, querySelector: () => null };
     const previewNode = { textContent: preview, fontWeight: bold ? '700' : '400', querySelector: () => null };
-    const row = { querySelectorAll: () => [nameNode, previewNode] };
+    const row = { querySelectorAll: () => [nameNode, previewNode],
+      getBoundingClientRect: () => ({ width: 0, height: 0 }) };
     return {
       getAttribute: () => `/messages/t/${id}/`,
       closest: () => row
@@ -985,4 +1002,92 @@ test('a late conversation signal refines a badge toast while its next distinct m
   assert.equal(state.notifications.length, 2);
   state.conversationRead('aabbccdd');
   assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('a trailing blue unread dot detects a new regular-weight preview and its read transition', async () => {
+  const state = startApp();
+  await state.ready();
+  state.tick(6000);
+  state.registerAttentionIcon();
+  const preload = startPreload((...args) => state.relay(...args));
+  const row = preload.thread('123', 'Earlier preview', false);
+  preload.rows([row]);
+  preload.update();
+  row.preview.textContent = 'test';
+  row.row.dots = [preload.dot()];
+  preload.update();
+  preload.update();
+  state.advance(600);
+  assert.equal(preload.changes().length, 1);
+  assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].body, 'test');
+  assert.ok(state.window.overlays.at(-1).icon);
+  row.row.dots = [];
+  preload.update();
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('an unread dot that arrives after preview text triggers once; initial and manual dots do not notify', () => {
+  const state = startPreload();
+  const row = state.thread('123', 'Initial unread', false);
+  row.row.dots = [state.dot()];
+  state.rows([row]);
+  state.scan();
+  assert.equal(state.changes().length, 0);
+  row.row.dots = [];
+  state.scan();
+  row.row.dots = [state.dot()];
+  state.scan(); // Manual unread, without a preview change.
+  assert.equal(state.changes().length, 0);
+  row.row.dots = [];
+  row.preview.textContent = 'New incoming';
+  state.tick(100);
+  state.scan();
+  state.tick(2100);
+  row.row.dots = [state.dot()];
+  state.scan();
+  state.scan();
+  assert.equal(state.changes().length, 1);
+});
+
+test('online dots, leading avatar decoration, hidden dots and rectangular blue controls are not unread', () => {
+  const state = startPreload();
+  const row = state.thread('123', 'Initial', false);
+  state.rows([row]);
+  state.scan();
+  const decoys = [
+    state.dot({ color: 'rgb(49, 162, 76)' }),
+    state.dot({ left: 35 }),
+    state.dot({ radius: '0px' }),
+    state.dot({ size: 32 }),
+    state.dot({ text: '1' }),
+    state.dot({ display: 'none' }),
+    state.dot({ visibility: 'hidden' }),
+    state.dot({ opacity: '0' }),
+    state.dot({ color: 'rgba(0, 100, 230, 0)' })
+  ];
+  for (const [index, dot] of decoys.entries()) {
+    row.preview.textContent = `Changed ${index}`;
+    row.row.dots = [dot];
+    state.scan();
+  }
+  assert.equal(state.changes().length, 0);
+});
+
+test('a blue-dot unread row prevents an empty navigation badge from clearing its notification', () => {
+  const state = startPreload();
+  let badges = [{ textContent: '1' }];
+  state.control({ querySelectorAll: () => badges });
+  const row = state.thread('123', 'test', false);
+  row.row.dots = [state.dot()];
+  state.rows([row]);
+  state.update();
+  badges = [];
+  state.update();
+  state.tick(2000);
+  state.update();
+  assert.equal(state.messages.filter(([channel]) => channel === 'messenger-unread-count').at(-1)[1], null);
+  row.row.dots = [];
+  state.update();
+  assert.equal(state.messages.filter(([channel]) => channel === 'messenger-unread-count').at(-1)[1], 0);
 });
