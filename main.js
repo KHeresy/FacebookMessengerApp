@@ -85,9 +85,13 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.on('update-badge', (event, { dataUrl, text }) => {
-    if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents && event.senderFrame === mainWindow.webContents.mainFrame) {
-      mainWindow.updateBadgeOverlay(dataUrl, text);
+  ipcMain.on('update-badge', (event, badge) => {
+    if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents &&
+        event.senderFrame === mainWindow.webContents.mainFrame && isMessengerPage(event.sender.getURL()) &&
+        badge && typeof badge.text === 'string' && badge.text.length <= 5 &&
+        (badge.dataUrl === null || (typeof badge.dataUrl === 'string' &&
+          badge.dataUrl.startsWith('data:image/png;base64,') && badge.dataUrl.length < 20000))) {
+      mainWindow.updateBadgeOverlay(badge.dataUrl, badge.text);
     }
   });
 
@@ -125,6 +129,13 @@ if (!gotTheLock) {
     mainWindow.handleMessengerConversationRead(threadFingerprint);
   });
 
+  ipcMain.on('messenger-monitoring-scan', (event) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents ||
+        event.senderFrame !== mainWindow.webContents.mainFrame ||
+        !isMessengerConversationPage(event.sender.getURL())) return;
+    mainWindow.handleMessengerMonitoringScan();
+  });
+
   function isMessengerPage(url) {
     try {
       const { hostname, pathname, protocol } = new URL(url);
@@ -157,18 +168,6 @@ if (!gotTheLock) {
     return Boolean(value) && !/^\(\d+\)/.test(value) &&
       !/^(Messenger|Facebook|Messages)(\s*\|\s*Facebook)?$/i.test(value) &&
       !/\|\s*Facebook$/i.test(value);
-  }
-
-  function currentThreadFingerprint(url) {
-    try {
-      const match = new URL(url).pathname.match(/^\/(?:messages\/)?t\/([^/]+)\/?$/);
-      if (!match) return null;
-      let hash = 2166136261;
-      for (const char of match[1]) hash = Math.imul(hash ^ char.codePointAt(0), 16777619);
-      return (hash >>> 0).toString(16).padStart(8, '0');
-    } catch {
-      return null;
-    }
   }
 
   function isFacebookOrigin(url) {
@@ -405,8 +404,8 @@ if (!gotTheLock) {
                 notificationsEnabled = menuItem.checked;
                 saveConfig();
                 if (mainWindow && !mainWindow.isDestroyed()) {
-                  mainWindow.resetMessengerNotification();
-                  if (!notificationsEnabled) mainWindow.clearUnreadAttention();
+                  mainWindow.resetMessengerMonitoring();
+                  if (!notificationsEnabled) mainWindow.clearUnreadAttention(true);
                 }
               }
             },
@@ -539,8 +538,8 @@ if (!gotTheLock) {
     notificationMode = mode;
     saveConfig();
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.resetMessengerNotification();
-      mainWindow.clearUnreadAttention();
+      mainWindow.clearUnreadAttention(true);
+      mainWindow.resetMessengerMonitoring();
     }
   }
 
@@ -577,12 +576,15 @@ if (!gotTheLock) {
     let pendingBaseline = null;
     let notificationTimer = null;
     let pendingSignal = null;
-    let pendingThreads = new Set();
-    let pendingPreview = '';
-    let pendingMessages = 0;
-    let lastNotifiedAt = 0;
-    let lastStrongSignalAt = 0;
+    const pendingMessages = new Map();
+    let notificationGeneration = 0;
+    let lastNotifiedAt = -Infinity;
+    let lastStrongSignalAt = -Infinity;
+    let lastConversationSignalAt = -Infinity;
+    let lastBadgeToastAt = -Infinity;
+    let badgeRefinementCredits = 0;
     let lastBadgeNotifiedCount = 0;
+    let badgeDecreaseTimer = null;
     const seenMessages = new Map();
     const seenTitles = new Map();
     let monitoringReadyAt = Date.now() + 5000;
@@ -590,14 +592,30 @@ if (!gotTheLock) {
     let badgeIcon = null;
     let badgeText = '';
     let attentionIcon = null;
-    let unreadAttention = false;
-    let attentionUnknown = false;
+    let weakAttention = false;
+    let reviewWeakAttention = false;
+    let badgeDismissed = false;
+    let lastOverlayState = '';
     const unreadThreads = new Set();
 
     const updateTaskbarOverlay = () => {
       if (process.platform !== 'win32' || mainWindow.isDestroyed()) return;
-      const icon = badgeIcon || (unreadAttention ? attentionIcon : null);
-      mainWindow.setOverlayIcon(icon, badgeIcon ? badgeText : (unreadAttention ? t('unreadAttention') : ''));
+      const appMode = notificationMode === NOTIFICATION_MODES.MESSENGER_ONLY;
+      // In app mode a renderer/title badge is only artwork: the trusted unread
+      // state decides whether it may be displayed. Stale artwork cannot keep an
+      // already-cleared alert alive.
+      const showBadge = badgeIcon && (!appMode || (!badgeDismissed && observedUnreadCount > 0 &&
+        badgeText === String(observedUnreadCount)));
+      const attention = unreadThreads.size > 0 || weakAttention;
+      const icon = appMode && !notificationsEnabled ? null :
+        (showBadge ? badgeIcon : (appMode && attention ? attentionIcon : null));
+      const overlayState = `${icon ? (icon === badgeIcon ? 'badge' : 'attention') : 'clear'}; ` +
+        `count=${observedUnreadCount ?? 'unknown'}; threads=${unreadThreads.size}; weak=${weakAttention}`;
+      if (appMode && overlayState !== lastOverlayState) {
+        lastOverlayState = overlayState;
+        console.info(`[Messenger notification] Taskbar ${overlayState}`);
+      }
+      mainWindow.setOverlayIcon(icon, icon ? (icon === badgeIcon ? badgeText : t('unreadAttention')) : '');
     };
 
     mainWindow.updateBadgeOverlay = (dataUrl, text) => {
@@ -612,10 +630,12 @@ if (!gotTheLock) {
     };
 
     mainWindow.clearUnreadAttention = (clearBadge = false) => {
-      unreadAttention = false;
-      attentionUnknown = false;
+      weakAttention = false;
+      badgeRefinementCredits = 0;
+      reviewWeakAttention = false;
       unreadThreads.clear();
       if (clearBadge) {
+        badgeDismissed = true;
         badgeIcon = null;
         badgeText = '';
       }
@@ -638,35 +658,63 @@ if (!gotTheLock) {
         }
       });
 
-      notification.show();
+      notification.on('failed', (event, error) => console.error('[Messenger notification] Native notification failed:', error));
+      try {
+        notification.show();
+      } catch (error) {
+        console.error('[Messenger notification] Could not show native notification:', error);
+      }
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.flashFrame(true);
     };
 
     mainWindow.resetMessengerNotification = () => {
+      notificationGeneration++;
       if (notificationTimer) clearTimeout(notificationTimer);
       notificationTimer = null;
       pendingSignal = null;
-      pendingThreads.clear();
-      pendingPreview = '';
-      pendingMessages = 0;
+      pendingMessages.clear();
       pendingBaseline = null;
+    };
+
+    mainWindow.resetMessengerMonitoring = (refresh = true) => {
+      mainWindow.resetMessengerNotification();
+      if (badgeDecreaseTimer) clearTimeout(badgeDecreaseTimer);
+      badgeDecreaseTimer = null;
+      observedUnreadCount = null;
+      lastBadgeNotifiedCount = 0;
+      lastNotifiedAt = -Infinity;
+      lastStrongSignalAt = -Infinity;
+      lastConversationSignalAt = -Infinity;
+      lastBadgeToastAt = -Infinity;
+      badgeRefinementCredits = 0;
+      seenMessages.clear();
+      seenTitles.clear();
+      updateTaskbarOverlay();
+      if (refresh) mainWindow.webContents.send('refresh-messenger-state');
     };
 
     const queueMessengerNotification = (source, value = '', message = '', preview = '') => {
       if (notificationMode !== NOTIFICATION_MODES.MESSENGER_ONLY || !notificationsEnabled ||
-          mainWindow.isFocused() || !isMessengerConversationPage(mainWindow.webContents.getURL()) ||
-          Date.now() < monitoringReadyAt) return;
+          !isMessengerConversationPage(mainWindow.webContents.getURL())) return;
+      if (mainWindow.isFocused() || Date.now() < monitoringReadyAt) {
+        console.info(`[Messenger notification] Ignored ${source}: ${mainWindow.isFocused() ? 'window focused' : 'initial baseline'}`);
+        return;
+      }
       const now = Date.now();
+      const messageKey = `${value}:${message}`;
       if (source === 'conversation') {
-        if (seenMessages.has(message) && now - seenMessages.get(message) < 10000) return;
-        seenMessages.set(message, now);
+        if (seenMessages.has(messageKey) && now - seenMessages.get(messageKey) < 10000) return;
+        seenMessages.set(messageKey, now);
         if (seenMessages.size > 500) seenMessages.delete(seenMessages.keys().next().value);
         lastStrongSignalAt = now;
-        // Another message during the brief toast cooldown still belongs to the
-        // pending unread state, even if it is coalesced into one toast.
-        if (!notificationTimer && now - lastNotifiedAt < 2500) {
+        lastConversationSignalAt = now;
+        // A late conversation snapshot can identify a badge-only toast that
+        // just appeared. Upgrade its read tracking instead of showing it twice.
+        if (!notificationTimer && badgeRefinementCredits > 0 && now - lastBadgeToastAt < 1400) {
+          badgeRefinementCredits--;
           unreadThreads.add(value);
-          unreadAttention = true;
+          badgeDismissed = false;
+          if (!badgeRefinementCredits) weakAttention = false;
           updateTaskbarOverlay();
           return;
         }
@@ -674,7 +722,10 @@ if (!gotTheLock) {
         if (observedUnreadCount <= lastBadgeNotifiedCount) return;
         lastBadgeNotifiedCount = observedUnreadCount;
         lastStrongSignalAt = now;
-        if (!notificationTimer && now - lastNotifiedAt < 2500) return;
+        // Badge hydration shortly after a conversation toast is commonly the
+        // same arrival, rather than a second message. Later badge-only increases
+        // still use the delayed queue.
+        if (!notificationTimer && now - lastConversationSignalAt < 1400) return;
       } else {
         if (seenTitles.has(value) && now - seenTitles.get(value) < 30000) return;
         seenTitles.set(value, now);
@@ -687,18 +738,23 @@ if (!gotTheLock) {
       if (pendingSignal === 'conversation' && source !== 'conversation') return;
       if (pendingSignal === 'badge' && source === 'title') return;
       if (pendingSignal === 'conversation' && source === 'conversation' && notificationTimer) {
-        pendingThreads.add(value);
-        pendingMessages++;
+        pendingMessages.set(messageKey, { thread: value, preview });
         return;
       }
       pendingSignal = source;
       if (source === 'conversation') {
-        pendingThreads.add(value);
-        pendingPreview = preview;
-        pendingMessages = 1;
+        pendingMessages.set(messageKey, { thread: value, preview });
       }
       if (notificationTimer) clearTimeout(notificationTimer);
+      const generation = notificationGeneration;
+      // Distinct arrivals during cooldown are delayed, not discarded. Weaker
+      // signals still coalesce with the stronger pending conversation event.
+      const delay = Math.max(source === 'conversation' ? 600 : 1400, lastNotifiedAt + 2500 - now);
+      if (delay > (source === 'conversation' ? 600 : 1400)) {
+        console.info(`[Messenger notification] Delayed ${source}: toast cooldown`);
+      }
       notificationTimer = setTimeout(() => {
+        if (generation !== notificationGeneration) return;
         notificationTimer = null;
         const signal = pendingSignal;
         pendingSignal = null;
@@ -707,25 +763,25 @@ if (!gotTheLock) {
             isMessengerConversationPage(mainWindow.webContents.getURL()) && Date.now() >= monitoringReadyAt &&
             (signal !== 'badge' || (observedUnreadCount !== null && observedUnreadCount > pendingBaseline))) {
           lastNotifiedAt = Date.now();
+          badgeDismissed = false;
           if (signal === 'conversation') {
-            for (const thread of pendingThreads) unreadThreads.add(thread);
-          } else if (signal === 'title') {
-            const thread = currentThreadFingerprint(mainWindow.webContents.getURL());
-            if (thread) unreadThreads.add(thread);
-            else attentionUnknown = true;
+            for (const { thread } of pendingMessages.values()) unreadThreads.add(thread);
           } else {
-            attentionUnknown = true;
+            // A title/badge does not identify the receiving conversation.
+            weakAttention = true;
+            if (signal === 'badge') {
+              lastBadgeToastAt = Date.now();
+              badgeRefinementCredits = Math.max(1, observedUnreadCount - pendingBaseline);
+            }
           }
-          unreadAttention = true;
           updateTaskbarOverlay();
           console.info(`[Messenger notification] Showing ${signal} signal`);
-          showNotification(signal === 'conversation' && pendingMessages === 1 ? pendingPreview : '');
+          showNotification(signal === 'conversation' && pendingMessages.size === 1 ?
+            pendingMessages.values().next().value.preview : '');
         }
-        pendingThreads.clear();
-        pendingPreview = '';
-        pendingMessages = 0;
+        pendingMessages.clear();
         pendingBaseline = null;
-      }, source === 'conversation' ? 600 : 1400);
+      }, delay);
     };
 
     mainWindow.handleMessengerConversationChange = ({ thread, message, preview }) => {
@@ -735,34 +791,54 @@ if (!gotTheLock) {
     };
 
     mainWindow.handleMessengerConversationRead = (threadFingerprint) => {
-      if (pendingSignal === 'conversation' && pendingThreads.has(threadFingerprint)) {
-        pendingThreads.delete(threadFingerprint);
-        if (!pendingThreads.size) mainWindow.resetMessengerNotification();
+      if (pendingSignal === 'conversation') {
+        for (const [key, message] of pendingMessages) {
+          if (message.thread === threadFingerprint) pendingMessages.delete(key);
+        }
+        if (!pendingMessages.size) mainWindow.resetMessengerNotification();
       }
-      if (pendingSignal === 'title' && currentThreadFingerprint(mainWindow.webContents.getURL()) === threadFingerprint) {
-        mainWindow.resetMessengerNotification();
-      }
-      if (unreadThreads.delete(threadFingerprint) && !unreadThreads.size && !attentionUnknown) {
-        unreadAttention = false;
+      if (unreadThreads.delete(threadFingerprint)) {
+        // A count of one can be lagging behind the only tracked conversation's
+        // confirmed read. Larger counts may include other unread conversations.
+        if (!unreadThreads.size && observedUnreadCount === 1) badgeDismissed = true;
         updateTaskbarOverlay();
-        mainWindow.flashFrame(false);
+        if (!unreadThreads.size && !weakAttention) mainWindow.flashFrame(false);
       }
+    };
+
+    mainWindow.handleMessengerMonitoringScan = () => {
+      if (!reviewWeakAttention || !mainWindow.isFocused()) return;
+      reviewWeakAttention = false;
+      weakAttention = false;
+      badgeRefinementCredits = 0;
+      updateTaskbarOverlay();
+      console.info('[Messenger notification] Weak alert acknowledged after focused scan');
     };
 
     mainWindow.handleMessengerUnreadCount = (count) => {
       const previous = observedUnreadCount;
       observedUnreadCount = count;
-      if (count === 0 && previous !== null && previous > 0) {
+      if (badgeDecreaseTimer) clearTimeout(badgeDecreaseTimer);
+      badgeDecreaseTimer = null;
+      if (count === 0) {
         lastBadgeNotifiedCount = 0;
-        attentionUnknown = false;
-        unreadThreads.clear();
-        unreadAttention = false;
-        updateTaskbarOverlay();
-        mainWindow.flashFrame(false);
+        mainWindow.clearUnreadAttention(true);
+        console.info('[Messenger notification] Cleared: confirmed zero unread');
+        return;
       }
+      if (count !== null && count !== previous) badgeDismissed = false;
+      updateTaskbarOverlay();
       if (count === null) {
         if (pendingSignal === 'badge') mainWindow.resetMessengerNotification();
         return;
+      }
+      if (previous === null) lastBadgeNotifiedCount = count;
+      if (count < lastBadgeNotifiedCount) {
+        const loweredCount = count;
+        badgeDecreaseTimer = setTimeout(() => {
+          badgeDecreaseTimer = null;
+          if (observedUnreadCount === loweredCount) lastBadgeNotifiedCount = loweredCount;
+        }, 1500);
       }
       if (Date.now() < monitoringReadyAt || notificationMode !== NOTIFICATION_MODES.MESSENGER_ONLY ||
           !notificationsEnabled || mainWindow.isFocused()) {
@@ -787,16 +863,22 @@ if (!gotTheLock) {
 
     mainWindow.on('focus', () => {
       mainWindow.resetMessengerNotification();
+      reviewWeakAttention = true;
       mainWindow.flashFrame(false);
+      mainWindow.webContents.send('refresh-messenger-state');
     });
     mainWindow.on('closed', () => {
       if (notificationTimer) clearTimeout(notificationTimer);
+      if (badgeDecreaseTimer) clearTimeout(badgeDecreaseTimer);
+      notificationGeneration++;
       mainWindow = null;
     });
     mainWindow.webContents.on('did-start-navigation', (details) => {
       if (details.isMainFrame && !details.isSameDocument) {
-        mainWindow.resetMessengerNotification();
-        observedUnreadCount = null;
+        badgeIcon = null;
+        badgeText = '';
+        weakAttention = false;
+        mainWindow.resetMessengerMonitoring(false);
         monitoringReadyAt = Date.now() + 5000;
       }
     });
