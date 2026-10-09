@@ -85,9 +85,14 @@ if (!gotTheLock) {
     }
   });
 
+  function isMainWindowEvent(event, pageMatcher = null) {
+    return mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents &&
+      event.senderFrame === mainWindow.webContents.mainFrame &&
+      (!pageMatcher || pageMatcher(event.sender.getURL()));
+  }
+
   ipcMain.on('update-badge', (event, badge) => {
-    if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents &&
-        event.senderFrame === mainWindow.webContents.mainFrame && isMessengerPage(event.sender.getURL()) &&
+    if (isMainWindowEvent(event, isMessengerPage) &&
         badge && typeof badge.text === 'string' && badge.text.length <= 5 &&
         (badge.dataUrl === null || (typeof badge.dataUrl === 'string' &&
           badge.dataUrl.startsWith('data:image/png;base64,') && badge.dataUrl.length < 20000))) {
@@ -96,8 +101,7 @@ if (!gotTheLock) {
   });
 
   ipcMain.on('register-attention-icon', (event, dataUrl) => {
-    if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents &&
-        event.senderFrame === mainWindow.webContents.mainFrame && typeof dataUrl === 'string' &&
+    if (isMainWindowEvent(event) && typeof dataUrl === 'string' &&
         dataUrl.startsWith('data:image/png;base64,') && dataUrl.length < 20000) {
       mainWindow.setAttentionIcon(dataUrl);
     }
@@ -105,16 +109,21 @@ if (!gotTheLock) {
 
   // Only the main Messenger page may report unread conversation counts.
   ipcMain.on('messenger-unread-count', (event, count) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents ||
-        event.senderFrame !== mainWindow.webContents.mainFrame || !isMessengerPage(event.sender.getURL()) ||
+    if (!isMainWindowEvent(event, isMessengerPage) ||
         (count !== null && (!Number.isSafeInteger(count) || count < 0 || count > 99999))) return;
     mainWindow.handleMessengerUnreadCount(count);
   });
 
+  // Dot state is true/false for a scanned list, or null while it is unavailable.
+  // It controls taskbar artwork independently of native preview notifications.
+  ipcMain.on('messenger-blue-dot-state', (event, hasBlueDot) => {
+    if (!isMainWindowEvent(event, isMessengerConversationPage) ||
+        (hasBlueDot !== null && typeof hasBlueDot !== 'boolean')) return;
+    mainWindow.handleMessengerBlueDotState(hasBlueDot);
+  });
+
   ipcMain.on('messenger-conversation-change', (event, change) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents ||
-        event.senderFrame !== mainWindow.webContents.mainFrame ||
-        !isMessengerConversationPage(event.sender.getURL()) ||
+    if (!isMainWindowEvent(event, isMessengerConversationPage) ||
         !change || typeof change.thread !== 'string' || !/^[0-9a-f]{8}$/.test(change.thread) ||
         typeof change.message !== 'string' || !/^[0-9a-f]{8}$/.test(change.message) ||
         typeof change.preview !== 'string' || change.preview.length > 500) return;
@@ -122,17 +131,13 @@ if (!gotTheLock) {
   });
 
   ipcMain.on('messenger-conversation-read', (event, threadFingerprint) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents ||
-        event.senderFrame !== mainWindow.webContents.mainFrame ||
-        !isMessengerConversationPage(event.sender.getURL()) ||
+    if (!isMainWindowEvent(event, isMessengerConversationPage) ||
         typeof threadFingerprint !== 'string' || !/^[0-9a-f]{8}$/.test(threadFingerprint)) return;
     mainWindow.handleMessengerConversationRead(threadFingerprint);
   });
 
   ipcMain.on('messenger-monitoring-scan', (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents ||
-        event.senderFrame !== mainWindow.webContents.mainFrame ||
-        !isMessengerConversationPage(event.sender.getURL())) return;
+    if (!isMainWindowEvent(event, isMessengerConversationPage)) return;
     mainWindow.handleMessengerMonitoringScan();
   });
 
@@ -406,7 +411,7 @@ if (!gotTheLock) {
                 saveConfig();
                 if (mainWindow && !mainWindow.isDestroyed()) {
                   mainWindow.resetMessengerMonitoring();
-                  if (!notificationsEnabled) mainWindow.clearUnreadAttention(true);
+                  if (!notificationsEnabled) mainWindow.clearUnreadAttention();
                 }
               }
             },
@@ -439,7 +444,7 @@ if (!gotTheLock) {
             {
               label: t('clearUnreadAttention'),
               click: () => {
-                if (mainWindow && !mainWindow.isDestroyed()) mainWindow.clearUnreadAttention(true);
+                if (mainWindow && !mainWindow.isDestroyed()) mainWindow.clearUnreadAttention();
               }
             },
             {
@@ -539,7 +544,6 @@ if (!gotTheLock) {
     notificationMode = mode;
     saveConfig();
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.clearUnreadAttention(true);
       mainWindow.resetMessengerMonitoring();
     }
   }
@@ -596,27 +600,47 @@ if (!gotTheLock) {
     let weakAttention = false;
     let reviewWeakAttention = false;
     let badgeDismissed = false;
+    // Undefined means no dot report yet; null means the list is unavailable.
+    let blueDotUnread;
+    let lastConfirmedBlueDotState = null;
+    let overlayDismissed = false;
+    let displayedOverlay = { icon: null, text: '' };
     let lastOverlayState = '';
     const unreadThreads = new Set();
 
     const updateTaskbarOverlay = () => {
       if (process.platform !== 'win32' || mainWindow.isDestroyed()) return;
       const appMode = notificationMode === NOTIFICATION_MODES.MESSENGER_ONLY;
-      // In app mode a renderer/title badge is only artwork: the trusted unread
-      // state decides whether it may be displayed. Stale artwork cannot keep an
-      // already-cleared alert alive.
-      const showBadge = badgeIcon && (!appMode || (!badgeDismissed && observedUnreadCount > 0 &&
-        badgeText === String(observedUnreadCount)));
-      const attention = unreadThreads.size > 0 || weakAttention;
-      const icon = appMode && !notificationsEnabled ? null :
-        (showBadge ? badgeIcon : (appMode && attention ? attentionIcon : null));
+      let icon = null;
+      let text = '';
+      if (!overlayDismissed && (!appMode || notificationsEnabled)) {
+        if (blueDotUnread === true) {
+          icon = attentionIcon;
+          text = t('unreadAttention');
+        } else if (blueDotUnread === null) {
+          // Once dot monitoring is active, an unavailable list preserves artwork.
+          ({ icon, text } = displayedOverlay);
+        } else if (blueDotUnread === undefined) {
+          // Compatibility fallback until the first conversation-list scan.
+          const showBadge = badgeIcon && (!appMode || (!badgeDismissed && observedUnreadCount > 0 &&
+            badgeText === String(observedUnreadCount)));
+          if (showBadge) {
+            icon = badgeIcon;
+            text = badgeText;
+          } else if (appMode && (unreadThreads.size > 0 || weakAttention)) {
+            icon = attentionIcon;
+            text = t('unreadAttention');
+          }
+        }
+      }
       const overlayState = `${icon ? (icon === badgeIcon ? 'badge' : 'attention') : 'clear'}; ` +
-        `count=${observedUnreadCount ?? 'unknown'}; threads=${unreadThreads.size}; weak=${weakAttention}`;
+        `count=${observedUnreadCount ?? 'unknown'}; dots=${blueDotUnread ?? 'unknown'}; threads=${unreadThreads.size}; weak=${weakAttention}`;
       if (appMode && overlayState !== lastOverlayState) {
         lastOverlayState = overlayState;
         console.info(`[Messenger notification] Taskbar ${overlayState}`);
       }
-      mainWindow.setOverlayIcon(icon, icon ? (icon === badgeIcon ? badgeText : t('unreadAttention')) : '');
+      displayedOverlay = { icon, text: icon ? text : '' };
+      mainWindow.setOverlayIcon(displayedOverlay.icon, displayedOverlay.text);
     };
 
     mainWindow.updateBadgeOverlay = (dataUrl, text) => {
@@ -630,17 +654,19 @@ if (!gotTheLock) {
       updateTaskbarOverlay();
     };
 
-    mainWindow.clearUnreadAttention = (clearBadge = false) => {
+    const clearNotificationAttention = () => {
       weakAttention = false;
       badgeRefinementCredits = 0;
       reviewWeakAttention = false;
       unreadThreads.clear();
-      if (clearBadge) {
-        badgeDismissed = true;
-        badgeIcon = null;
-        badgeText = '';
-      }
-      mainWindow.resetMessengerNotification();
+      badgeDismissed = true;
+      badgeIcon = null;
+      badgeText = '';
+      mainWindow.flashFrame(false);
+    };
+
+    mainWindow.clearUnreadAttention = () => {
+      overlayDismissed = true;
       updateTaskbarOverlay();
       mainWindow.flashFrame(false);
     };
@@ -679,6 +705,10 @@ if (!gotTheLock) {
 
     mainWindow.resetMessengerMonitoring = (refresh = true) => {
       mainWindow.resetMessengerNotification();
+      if (refresh) {
+        overlayDismissed = false;
+        clearNotificationAttention();
+      }
       if (badgeDecreaseTimer) clearTimeout(badgeDecreaseTimer);
       badgeDecreaseTimer = null;
       observedUnreadCount = null;
@@ -714,6 +744,7 @@ if (!gotTheLock) {
         if (!notificationTimer && badgeRefinementCredits > 0 && now - lastBadgeToastAt < 1400) {
           badgeRefinementCredits--;
           unreadThreads.add(value);
+          overlayDismissed = false;
           badgeDismissed = false;
           if (!badgeRefinementCredits) weakAttention = false;
           updateTaskbarOverlay();
@@ -764,6 +795,7 @@ if (!gotTheLock) {
             isMessengerConversationPage(mainWindow.webContents.getURL()) && Date.now() >= monitoringReadyAt &&
             (signal !== 'badge' || (observedUnreadCount !== null && observedUnreadCount > pendingBaseline))) {
           lastNotifiedAt = Date.now();
+          overlayDismissed = false;
           badgeDismissed = false;
           if (signal === 'conversation') {
             for (const { thread } of pendingMessages.values()) unreadThreads.add(thread);
@@ -823,7 +855,9 @@ if (!gotTheLock) {
       badgeDecreaseTimer = null;
       if (count === 0) {
         lastBadgeNotifiedCount = 0;
-        mainWindow.clearUnreadAttention(true);
+        clearNotificationAttention();
+        mainWindow.resetMessengerNotification();
+        updateTaskbarOverlay();
         console.info('[Messenger notification] Cleared: confirmed zero unread');
         return;
       }
@@ -855,6 +889,15 @@ if (!gotTheLock) {
       queueMessengerNotification('badge');
     };
 
+    mainWindow.handleMessengerBlueDotState = (hasBlueDot) => {
+      if (hasBlueDot !== null) {
+        if (hasBlueDot && lastConfirmedBlueDotState === false) overlayDismissed = false;
+        lastConfirmedBlueDotState = hasBlueDot;
+      }
+      blueDotUnread = hasBlueDot;
+      updateTaskbarOverlay();
+    };
+
     // Facebook may not render the navigation badge in Messenger's conversation UI.
     // Restore the original title-based signal, but only on Messenger conversation pages.
     mainWindow.on('page-title-updated', (event, title) => {
@@ -876,6 +919,7 @@ if (!gotTheLock) {
     });
     mainWindow.webContents.on('did-start-navigation', (details) => {
       if (details.isMainFrame && !details.isSameDocument) {
+        if (blueDotUnread !== undefined) blueDotUnread = null;
         badgeIcon = null;
         badgeText = '';
         weakAttention = false;

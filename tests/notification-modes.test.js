@@ -145,6 +145,13 @@ function startApp() {
         senderFrame: window.webContents.mainFrame
       }, count);
     },
+    blueDots: (hasBlueDot, url = 'https://www.facebook.com/messages/') => {
+      window.url = url;
+      handlers.emit('messenger-blue-dot-state', {
+        sender: window.webContents,
+        senderFrame: window.webContents.mainFrame
+      }, hasBlueDot);
+    },
     conversationChange: (id, url = 'https://www.facebook.com/messages/t/123/', message = id, preview = '') => {
       window.url = url;
       handlers.emit('messenger-conversation-change', {
@@ -167,6 +174,7 @@ function startApp() {
       sender: window.webContents,
       senderFrame: window.webContents.mainFrame
     }, ...args),
+    relayFrom: (event, channel, ...args) => handlers.emit(channel, event, ...args),
     registerAttentionIcon: () => handlers.emit('register-attention-icon', {
       sender: window.webContents,
       senderFrame: window.webContents.mainFrame
@@ -217,12 +225,15 @@ function startPreload(onSend = () => {}) {
     update: () => vm.runInContext('updateBadge()', context),
     refresh: () => listeners.get('refresh-messenger-state')(),
     changes: () => messages.filter(([channel]) => channel === 'messenger-conversation-change'),
+    blueDotReports: () => messages.filter(([channel]) => channel === 'messenger-blue-dot-state').map(([, value]) => value),
     thread: (id, preview, bold, href = `/messages/t/${id}/`) => {
       const previewNode = { textContent: preview, fontWeight: bold ? '700' : '400', querySelector: () => null };
+      const avatar = { getBoundingClientRect: () => ({ left: 0, right: 48, top: 12, bottom: 60, width: 48, height: 48 }) };
       const row = {
         dots: [],
         style: { direction: 'ltr' },
         getBoundingClientRect: () => ({ left: 0, right: 280, top: 0, bottom: 72, width: 280, height: 72 }),
+        querySelector: selector => selector === 'img' ? avatar : null,
         querySelectorAll: selector => selector === '[dir="auto"]' ?
           [{ textContent: `Name ${id}`, querySelector: () => null }, previewNode] : row.dots
       };
@@ -457,6 +468,30 @@ test('an unread alert persists after focus while a distinct new conversation sti
   assert.equal(state.window.overlays.at(-1).icon, null);
 });
 
+test('a confirmed blue-dot state controls taskbar artwork without suppressing preview notifications', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.report(2);
+  state.badgeOverlay('data:image/png;base64,BBBB', '2');
+  assert.equal(state.window.overlays.at(-1).text, '2');
+
+  state.blueDots(false);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+  state.blueDots(true);
+  assert.equal(state.window.overlays.at(-1).icon.dataUrl, 'data:image/png;base64,AAAA');
+  state.badgeOverlay(null, '');
+  assert.equal(state.window.overlays.at(-1).icon.dataUrl, 'data:image/png;base64,AAAA');
+  state.blueDots(false);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+
+  state.tick(6000);
+  state.conversationChange('aabbccdd', undefined, '00000001', 'Preview stays enabled');
+  state.fireTimers();
+  assert.equal(state.notifications.at(-1).body, 'Preview stays enabled');
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
 test('a new preview in the same still-unread conversation notifies again, but replayed signals do not', async () => {
   const state = startApp();
   await state.ready();
@@ -595,10 +630,14 @@ test('preload only accepts numeric badges inside the Messenger control', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
   let control = null;
   let now = 0;
+  const queriedSelectors = [];
   const context = vm.createContext({
     require: () => ({ ipcRenderer: { sendSync: () => false, on: () => {} } }),
     window: { addEventListener: () => {} },
-    document: { querySelectorAll: () => control ? [control] : [] },
+    document: { querySelectorAll: selector => {
+      queriedSelectors.push(selector);
+      return control ? [control] : [];
+    } },
     Date: { now: () => now },
     console
   });
@@ -606,6 +645,9 @@ test('preload only accepts numeric badges inside the Messenger control', () => {
   const signal = () => vm.runInContext('getMessengerUnreadSignal()', context);
 
   assert.equal(signal(), null);
+  assert.ok(queriedSelectors.length > 0);
+  assert.ok(queriedSelectors.every(selector => !selector.includes('訊息')));
+  assert.ok(queriedSelectors.every(selector => !selector.includes('a[href="/messages/"]')));
   let badges = [];
   control = { querySelectorAll: () => badges };
   assert.equal(signal(), null); // Unrecognized empty controls are not reliable zero.
@@ -925,7 +967,7 @@ test('a visible unread conversation prevents an empty badge from reporting globa
   assert.equal(state.messages.filter(([channel]) => channel === 'messenger-unread-count').at(-1)[1], 0);
 });
 
-test('renderer refresh reconciles confirmed reads and weak alerts together after returning to Messenger', async () => {
+test('renderer refresh does not restore taskbar artwork when no unread blue dot is present', async () => {
   const state = startApp();
   await state.ready();
   state.registerAttentionIcon();
@@ -933,6 +975,8 @@ test('renderer refresh reconciles confirmed reads and weak alerts together after
   const preload = startPreload((...args) => state.relay(...args));
   const row = preload.thread('123', 'Earlier', false);
   preload.rows([row]);
+  preload.update();
+  preload.tick(1500);
   preload.update();
   state.window.emit('page-title-updated', {}, 'Unidentified new message');
   state.advance(1400);
@@ -945,7 +989,7 @@ test('renderer refresh reconciles confirmed reads and weak alerts together after
   state.window.focused = true;
   state.window.emit('focus');
   preload.refresh();
-  assert.ok(state.window.overlays.at(-1).icon); // Confirmed unread survives acknowledgement.
+  assert.equal(state.window.overlays.at(-1).icon, null); // Bold preview still drives toast detection, not taskbar artwork.
   row.preview.fontWeight = '400';
   preload.refresh();
   assert.equal(state.window.overlays.at(-1).icon, null);
@@ -1024,7 +1068,161 @@ test('a trailing blue unread dot detects a new regular-weight preview and its re
   assert.ok(state.window.overlays.at(-1).icon);
   row.row.dots = [];
   preload.update();
+  assert.ok(state.window.overlays.at(-1).icon); // A transient dot removal does not clear artwork.
+  preload.tick(1500);
+  preload.update();
   assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('manual taskbar dismissal keeps queued previews and restores only for a new arrival or a dot transition', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.tick(6000);
+  state.blueDots(true);
+  state.conversationChange('aabbccdd', undefined, '00000001', 'Queued preview');
+  const view = state.menu.find(item => item.label === '檢視');
+  const clear = view.submenu.find(item => item.label === '清除未讀提示');
+  clear.click();
+  assert.equal(state.window.overlays.at(-1).icon, null);
+  state.blueDots(true);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+  state.advance(600);
+  assert.equal(state.notifications[0].body, 'Queued preview');
+  assert.ok(state.window.overlays.at(-1).icon);
+
+  clear.click();
+  state.blueDots(null);
+  state.blueDots(true);
+  assert.equal(state.window.overlays.at(-1).icon, null); // Unloading is not a read/unread transition.
+  state.window.webContents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+  state.blueDots(true);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+  state.blueDots(false);
+  state.blueDots(true);
+  assert.ok(state.window.overlays.at(-1).icon);
+});
+
+test('an unavailable conversation list preserves artwork despite badge and notification updates', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.blueDots(true);
+  state.blueDots(null);
+  state.report(0);
+  state.badgeOverlay(null, '');
+  state.window.webContents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+  assert.ok(state.window.overlays.at(-1).icon);
+  state.blueDots(false);
+  state.tick(6000);
+  state.blueDots(null);
+  state.conversationChange('aabbccdd', undefined, '00000001', 'Still notify');
+  state.fireTimers();
+  assert.equal(state.notifications[0].body, 'Still notify');
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('notification switches respect current dot state and do not create initial-preview alerts', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.blueDots(true);
+  const view = state.menu.find(item => item.label === '檢視');
+  const enabled = view.submenu.find(item => item.label === '啟用背景通知');
+  enabled.click({ checked: false });
+  state.blueDots(true);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+  enabled.click({ checked: true });
+  assert.ok(state.window.overlays.at(-1).icon);
+  const mode = view.submenu.find(item => item.label === '通知模式');
+  mode.submenu[0].click();
+  assert.ok(state.window.overlays.at(-1).icon);
+  mode.submenu[1].click();
+  assert.ok(state.window.overlays.at(-1).icon);
+  state.fireTimers();
+  assert.equal(state.notifications.length, 0);
+});
+
+test('blue-dot IPC rejects subframes, other senders, invalid states and non-conversation pages', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.blueDots(false);
+  state.blueDots('true');
+  state.blueDots(true, 'https://www.facebook.com/notifications/');
+  state.window.url = 'https://www.facebook.com/messages/';
+  state.relayFrom({ sender: state.window.webContents, senderFrame: {} }, 'messenger-blue-dot-state', true);
+  state.relayFrom({ sender: {}, senderFrame: state.window.webContents.mainFrame }, 'messenger-blue-dot-state', true);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('preload reports current blue-dot state independently of preview weight and preserves it while rows are unavailable', () => {
+  const state = startPreload();
+  const row = state.thread('123', 'Existing preview', true);
+  state.rows([row]);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), []);
+  state.tick(1500);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [false]);
+
+  row.row.dots = [state.dot()];
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [false, true]);
+
+  row.row.dots = [];
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [false, true]);
+  state.tick(3000);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [false, true, false]);
+
+  state.rows([]);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [false, true, false, null]);
+});
+
+test('blue-dot monitoring works without a preview and restarts clear confirmation after unloading', () => {
+  const state = startPreload();
+  const row = state.thread('123', '', false);
+  row.row.dots = [state.dot()];
+  state.rows([row]);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [true]);
+  assert.equal(state.changes().length, 0);
+
+  row.row.dots = [];
+  state.update();
+  state.tick(1499);
+  state.refresh();
+  assert.deepEqual(state.blueDotReports(), [true]);
+  row.row.dots = [state.dot()];
+  state.update(); // A transient disappearance cannot complete a clear.
+  row.row.dots = [];
+  state.update();
+  state.rows([]);
+  state.update();
+  state.tick(5000);
+  state.rows([row]);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [true, true, null]); // Refresh re-reports the next confirmed state.
+  state.tick(6500);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [true, true, null, false]);
+});
+
+test('hidden rows cannot confirm an empty blue-dot state', () => {
+  const state = startPreload();
+  const row = state.thread('123', 'Earlier', false);
+  row.row.dots = [state.dot()];
+  state.rows([row]);
+  state.update();
+  row.row.dots = [];
+  row.row.getBoundingClientRect = () => ({ width: 0, height: 0 });
+  state.update();
+  state.tick(10000);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [true, null]);
 });
 
 test('an unread dot that arrives after preview text triggers once; initial and manual dots do not notify', () => {
