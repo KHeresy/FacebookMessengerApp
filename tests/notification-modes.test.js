@@ -152,12 +152,12 @@ function startApp() {
         senderFrame: window.webContents.mainFrame
       }, hasBlueDot);
     },
-    conversationChange: (id, url = 'https://www.facebook.com/messages/t/123/', message = id, preview = '') => {
+    conversationChange: (id, url = 'https://www.facebook.com/messages/t/123/', message = id, preview = '', sender = '') => {
       window.url = url;
       handlers.emit('messenger-conversation-change', {
         sender: window.webContents,
         senderFrame: window.webContents.mainFrame
-      }, { thread: id, message, preview });
+      }, { thread: id, message, preview, sender });
     },
     conversationRead: (id, url = 'https://www.facebook.com/messages/t/123/') => {
       window.url = url;
@@ -478,8 +478,9 @@ test('verified conversation notifications show a bounded preview and respect the
   state.tick(6000);
   state.report(0);
   state.report(1); // A badge arrives before the more informative conversation signal.
-  state.conversationChange('aabbccdd', undefined, '00000001', '  Hello\n there  ');
+  state.conversationChange('aabbccdd', undefined, '00000001', '  Hello\n there  ', 'Alice');
   state.fireTimers();
+  assert.equal(state.notifications[0].title, 'Alice');
   assert.equal(state.notifications[0].body, 'Hello there');
 
   const view = state.menu.find(item => item.label === '檢視');
@@ -488,14 +489,16 @@ test('verified conversation notifications show a bounded preview and respect the
   previewToggle.click({ checked: false });
   assert.equal(state.savedConfigs.at(-1).showMessagePreviews, false);
   state.tick(11000);
-  state.conversationChange('aabbccdd', undefined, '00000002', 'Another private message');
+  state.conversationChange('aabbccdd', undefined, '00000002', 'Another private message', 'Alice');
   state.fireTimers();
+  assert.equal(state.notifications[1].title, 'Messenger');
   assert.equal(state.notifications[1].body, '有新的 Messenger 訊息');
 
   previewToggle.click({ checked: true });
   state.tick(16000);
-  state.conversationChange('aabbccdd', undefined, '00000003', '\u202eSecret\tmessage');
+  state.conversationChange('aabbccdd', undefined, '00000003', '\u202eSecret\tmessage', 'Alice');
   state.fireTimers();
+  assert.equal(state.notifications[2].title, 'Alice');
   assert.equal(state.notifications[2].body, 'Secret message');
 
   state.tick(21000);
@@ -507,15 +510,40 @@ test('verified conversation notifications show a bounded preview and respect the
   assert.equal(Array.from(state.notifications[3].body).length, 160);
 });
 
-test('grouped conversations use generic text rather than a misleading preview', async () => {
+test('grouped conversations combine their message previews', async () => {
   const state = startApp();
   await state.ready();
   state.tick(6000);
-  state.conversationChange('aabbccdd', undefined, '00000001', 'First message');
-  state.conversationChange('bbccddee', undefined, '00000002', 'Second message');
+  state.conversationChange('aabbccdd', undefined, '00000001', 'First message', 'Group chat');
+  state.conversationChange('bbccddee', undefined, '00000002', 'Bob: Second message', 'Group chat');
   state.fireTimers();
   assert.equal(state.notifications.length, 1);
-  assert.equal(state.notifications[0].body, '有新的 Messenger 訊息');
+  assert.equal(state.notifications[0].title, 'Messenger');
+  assert.equal(state.notifications[0].body, 'Group chat: First message\nBob: Second message');
+});
+
+test('grouped previews keep a shared sender in the notification title', async () => {
+  const state = startApp();
+  await state.ready();
+  state.tick(6000);
+  state.conversationChange('aabbccdd', undefined, '00000001', 'First', 'Alice');
+  state.conversationChange('bbccddee', undefined, '00000002', 'Second', 'Alice');
+  state.fireTimers();
+  assert.equal(state.notifications[0].title, 'Alice');
+  assert.equal(state.notifications[0].body, 'First\nSecond');
+});
+
+test('combined message previews stay within the notification length limit', async () => {
+  const state = startApp();
+  await state.ready();
+  state.tick(6000);
+  for (let index = 0; index < 4; index++) {
+    state.conversationChange(`0000000${index}`, undefined, `1000000${index}`, String(index).repeat(160));
+  }
+  state.fireTimers();
+  const body = state.notifications[0].body;
+  assert.equal(Array.from(body).length, 500);
+  assert.ok(body.endsWith('…'));
 });
 
 test('a higher Messenger unread count can notify while the previous alert is still pending', async () => {
@@ -652,7 +680,9 @@ test('conversation snapshots ignore initial unread, new rows and manual unread; 
   assert.match(changes()[0][1].message, /^[0-9a-f]{8}$/);
   assert.notEqual(changes()[0][1].thread, changes()[0][1].message);
   assert.equal(changes()[0][1].preview, 'New incoming message');
+  assert.equal(changes()[0][1].sender, 'Alice');
   assert.equal(vm.runInContext('knownThreads.get("123").previewText', context), undefined);
+  assert.equal(vm.runInContext('knownThreads.get("123").sender', context), undefined);
 
   rows[0] = thread('123', 'Alice', 'Another incoming message', true);
   rows[0].closest().querySelectorAll()[1].fontWeight = 'bold';
@@ -674,7 +704,7 @@ test('confirmed zero cancels a pending conversation toast and clears stale numer
   state.report(1);
   state.badgeOverlay('data:image/png;base64,BBBB', '1');
   state.conversationChange('aabbccdd', undefined, '00000001', 'Already read before toast');
-  state.advance(300);
+  // A confirmed read in the same event turn cancels the immediate timer.
   state.report(0);
   state.advance(3000);
   assert.equal(state.notifications.length, 0);
@@ -733,20 +763,22 @@ test('a weak badge alert on a conversation URL clears after focus and rescan', a
   assert.equal(state.window.overlays.at(-1).icon, null);
 });
 
-test('distinct messages during cooldown are delayed and grouped, not lost', async () => {
+test('the first conversation notification is immediate; cooldown messages are delayed and grouped', async () => {
   const state = startApp();
   await state.ready();
   state.tick(6000);
   state.conversationChange('aabbccdd', undefined, '00000001', 'First');
-  state.advance(600);
+  state.advance(0);
+  assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].body, 'First');
   state.advance(100);
   state.conversationChange('aabbccdd', undefined, '00000002', 'Second');
   state.conversationChange('bbccddee', undefined, '00000003', 'Third');
-  state.advance(2399);
+  state.advance(899);
   assert.equal(state.notifications.length, 1);
   state.advance(1);
   assert.equal(state.notifications.length, 2);
-  assert.equal(state.notifications[1].body, '有新的 Messenger 訊息');
+  assert.equal(state.notifications[1].body, 'Second\nThird');
 });
 
 test('reading a cooldown message cancels its delayed toast', async () => {
@@ -755,7 +787,7 @@ test('reading a cooldown message cancels its delayed toast', async () => {
   state.registerAttentionIcon();
   state.tick(6000);
   state.conversationChange('aabbccdd', undefined, '00000001');
-  state.advance(600);
+  state.advance(0);
   state.conversationChange('aabbccdd', undefined, '00000002');
   state.conversationRead('aabbccdd');
   state.advance(3000);
@@ -770,7 +802,7 @@ test('reading one grouped conversation leaves only the remaining preview in the 
   state.conversationChange('aabbccdd', undefined, '00000001', 'Read message');
   state.conversationChange('bbccddee', undefined, '00000002', 'Still unread');
   state.conversationRead('aabbccdd');
-  state.advance(600);
+  state.advance(0);
   assert.equal(state.notifications[0].body, 'Still unread');
 });
 
@@ -799,7 +831,7 @@ test('later badge arrivals during cooldown are delayed while same-arrival hydrat
   state.tick(6000);
   state.report(0);
   state.conversationChange('aabbccdd');
-  state.advance(600);
+  state.advance(0);
   state.report(1); // Badge hydration of the already-notified conversation.
   state.advance(1400);
   assert.equal(state.notifications.length, 1);
@@ -834,7 +866,7 @@ test('confirmed read clears a lagging badge of one, but does not hide other unre
   state.report(1);
   state.badgeOverlay('data:image/png;base64,BBBB', '1');
   state.conversationChange('aabbccdd');
-  state.advance(600);
+  state.advance(0);
   state.conversationRead('aabbccdd');
   state.badgeOverlay('data:image/png;base64,BBBB', '1');
   assert.equal(state.window.overlays.at(-1).icon, null);
@@ -970,7 +1002,7 @@ test('a late conversation signal refines a badge toast while its next distinct m
   state.advance(700);
   assert.equal(state.notifications.length, 1);
   state.conversationChange('aabbccdd', undefined, '00000002', 'A distinct next message');
-  state.advance(1699);
+  state.advance(199);
   assert.equal(state.notifications.length, 1);
   state.advance(1);
   assert.equal(state.notifications.length, 2);
@@ -994,6 +1026,7 @@ test('a trailing blue unread dot detects a new regular-weight preview and its re
   state.advance(600);
   assert.equal(preload.changes().length, 1);
   assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].title, 'Name 123');
   assert.equal(state.notifications[0].body, 'test');
   assert.ok(state.window.overlays.at(-1).icon);
   row.row.dots = [];
@@ -1017,7 +1050,7 @@ test('manual taskbar dismissal keeps queued previews and restores only for a new
   assert.equal(state.window.overlays.at(-1).icon, null);
   state.blueDots(true);
   assert.equal(state.window.overlays.at(-1).icon, null);
-  state.advance(600);
+  state.advance(0);
   assert.equal(state.notifications[0].body, 'Queued preview');
   assert.ok(state.window.overlays.at(-1).icon);
 
@@ -1233,9 +1266,10 @@ test('Facebook E2EE conversation links are scanned and their IPC notification is
   row.preview.textContent = 'New E2EE message';
   row.row.dots = [preload.dot()];
   preload.update();
-  state.advance(600);
+  state.advance(0);
 
   assert.equal(preload.changes().length, 1);
   assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].title, 'Name 27146404911639725');
   assert.equal(state.notifications[0].body, 'New E2EE message');
 });

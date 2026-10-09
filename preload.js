@@ -140,6 +140,7 @@ function getConversationSnapshot() {
         // The first text node is typically the conversation name; the second is
         // the message preview. Skip rows where this structure is not present.
         if (texts.length < 2) continue;
+        const sender = Array.from(texts[0].textContent.replace(/\s+/g, ' ').trim()).slice(0, 80).join('');
         const preview = texts[1];
         const previewText = preview.textContent.replace(/\s+/g, ' ').trim();
         const previewHash = fingerprint(previewText);
@@ -150,6 +151,7 @@ function getConversationSnapshot() {
         const unread = boldPreview || unreadDot;
         visibleUnread ||= unread;
         threads.set(match[1], {
+            sender,
             preview: previewHash,
             previewText: Array.from(previewText).slice(0, 160).join(''),
             unread,
@@ -213,6 +215,7 @@ function updateConversationSignals() {
                 ipcRenderer.send('messenger-conversation-change', {
                     thread: fingerprint(id),
                     message: fingerprint(`${id}:${state.preview}:${revision}`),
+                    sender: state.sender,
                     preview: state.previewText
                 });
                 pendingUntil = 0;

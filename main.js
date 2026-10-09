@@ -10,6 +10,8 @@ if (process.argv.includes('--disable-gpu')) {
 
 const windowStateKeeper = require('electron-window-state');
 const translations = require('./translations');
+const NOTIFICATION_COOLDOWN_MS = 1000;
+const MAX_NOTIFICATION_PREVIEW_LENGTH = 500;
 
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.heresy.fbmessenger');
@@ -126,7 +128,8 @@ if (!gotTheLock) {
     if (!isMainWindowEvent(event, isMessengerConversationPage) ||
         !change || typeof change.thread !== 'string' || !/^[0-9a-f]{8}$/.test(change.thread) ||
         typeof change.message !== 'string' || !/^[0-9a-f]{8}$/.test(change.message) ||
-        typeof change.preview !== 'string' || change.preview.length > 500) return;
+        typeof change.preview !== 'string' || change.preview.length > 500 ||
+        (change.sender !== undefined && (typeof change.sender !== 'string' || change.sender.length > 160))) return;
     mainWindow.handleMessengerConversationChange(change);
   });
 
@@ -662,9 +665,9 @@ if (!gotTheLock) {
       mainWindow.flashFrame(false);
     };
 
-    const showNotification = (preview = '') => {
+    const showNotification = (preview = '', sender = '') => {
       const notification = new Notification({
-        title: t('newMessengerMessageTitle'),
+        title: showMessagePreviews && sender ? sender : t('newMessengerMessageTitle'),
         body: showMessagePreviews && preview ? preview : t('newMessengerMessageBody'),
         silent: false
       });
@@ -683,6 +686,18 @@ if (!gotTheLock) {
         console.error('[Messenger notification] Could not show native notification:', error);
       }
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.flashFrame(true);
+    };
+
+    const combineMessagePreviews = (messages, notificationSender = '') => {
+      const grouped = messages.size > 1;
+      const combined = [...messages.values()]
+        .map(({ preview, sender }) => preview && grouped && sender && sender !== notificationSender ?
+          `${sender}: ${preview}` : preview)
+        .filter(Boolean)
+        .join('\n');
+      const characters = Array.from(combined);
+      if (characters.length <= MAX_NOTIFICATION_PREVIEW_LENGTH) return combined;
+      return `${characters.slice(0, MAX_NOTIFICATION_PREVIEW_LENGTH - 1).join('')}…`;
     };
 
     mainWindow.resetMessengerNotification = () => {
@@ -713,7 +728,7 @@ if (!gotTheLock) {
       if (refresh) mainWindow.webContents.send('refresh-messenger-state');
     };
 
-    const queueMessengerNotification = (source, value = '', message = '', preview = '') => {
+    const queueMessengerNotification = (source, value = '', message = '', preview = '', sender = '') => {
       if (notificationMode !== NOTIFICATION_MODES.MESSENGER_ONLY || !notificationsEnabled ||
           !isMessengerConversationPage(mainWindow.webContents.getURL())) return;
       if (mainWindow.isFocused() || Date.now() < monitoringReadyAt) {
@@ -751,19 +766,20 @@ if (!gotTheLock) {
       // Prefer a known conversation over the weaker badge signal.
       if (pendingSignal === 'conversation' && source !== 'conversation') return;
       if (pendingSignal === 'conversation' && source === 'conversation' && notificationTimer) {
-        pendingMessages.set(messageKey, { thread: value, preview });
+        pendingMessages.set(messageKey, { thread: value, preview, sender });
         return;
       }
       pendingSignal = source;
       if (source === 'conversation') {
-        pendingMessages.set(messageKey, { thread: value, preview });
+        pendingMessages.set(messageKey, { thread: value, preview, sender });
       }
       if (notificationTimer) clearTimeout(notificationTimer);
       const generation = notificationGeneration;
       // Distinct arrivals during cooldown are delayed, not discarded. Weaker
       // signals still coalesce with the stronger pending conversation event.
-      const delay = Math.max(source === 'conversation' ? 600 : 1400, lastNotifiedAt + 2500 - now);
-      if (delay > (source === 'conversation' ? 600 : 1400)) {
+      const minimumDelay = source === 'conversation' ? 0 : 1400;
+      const delay = Math.max(minimumDelay, lastNotifiedAt + NOTIFICATION_COOLDOWN_MS - now);
+      if (delay > minimumDelay) {
         console.info(`[Messenger notification] Delayed ${source}: toast cooldown`);
       }
       notificationTimer = setTimeout(() => {
@@ -790,18 +806,26 @@ if (!gotTheLock) {
           }
           updateTaskbarOverlay();
           console.info(`[Messenger notification] Showing ${signal} signal`);
-          showNotification(signal === 'conversation' && pendingMessages.size === 1 ?
-            pendingMessages.values().next().value.preview : '');
+          const senders = [...new Set([...pendingMessages.values()].map(({ sender }) => sender).filter(Boolean))];
+          const notificationSender = signal === 'conversation' && senders.length === 1 ? senders[0] : '';
+          showNotification(signal === 'conversation' ?
+            combineMessagePreviews(pendingMessages, notificationSender) : '', notificationSender);
         }
         pendingMessages.clear();
         pendingBaseline = null;
       }, delay);
     };
 
-    mainWindow.handleMessengerConversationChange = ({ thread, message, preview }) => {
+    mainWindow.handleMessengerConversationChange = ({ thread, message, preview, sender = '' }) => {
       const normalizedPreview = preview.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ' ')
         .replace(/\s+/g, ' ').trim();
-      queueMessengerNotification('conversation', thread, message, Array.from(normalizedPreview).slice(0, 160).join(''));
+      const normalizedSender = Array.from(sender.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ' ')
+        .replace(/\s+/g, ' ').trim()).slice(0, 80).join('');
+      const senderPrefix = normalizedPreview.match(/^([^:：\n]{1,64})[:：]\s(.*)$/);
+      const notificationSender = senderPrefix?.[1] || normalizedSender;
+      const messagePreview = senderPrefix ? senderPrefix[2] : normalizedPreview;
+      queueMessengerNotification('conversation', thread, message,
+        Array.from(messagePreview).slice(0, 160).join(''), notificationSender);
     };
 
     mainWindow.handleMessengerConversationRead = (threadFingerprint) => {

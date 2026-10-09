@@ -9,6 +9,9 @@ Note: If only the date suffix at the end of the version changes (e.g., v1.3.0.YY
 - improve: Drive Windows taskbar unread artwork from conversation blue dots, with a stable clear delay and unavailable-list state preservation
 - fix: Scan blue dots independently of preview parsing and keep queued preview notifications when dismissing the taskbar indicator
 - fix: Remove page-title-based notification fallback to prevent repeated generic alerts for existing unread messages
+- improve: Send the first conversation notification immediately and reduce the cooldown between later notifications to one second
+- improve: Combine available message previews when multiple conversation notifications are grouped
+- improve: Use the sender or conversation name as the notification title when available
 - refactor: Centralize main-frame IPC validation and remove redundant selectors
 - test: Expand notification coverage to 47 cases for blue-dot monitoring, dismissal, unavailable lists and IPC validation
 - test: Verify page-title changes do not trigger Messenger notifications
