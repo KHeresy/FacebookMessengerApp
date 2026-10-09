@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 Note: If only the date suffix at the end of the version changes (e.g., v1.3.0.YYYYMMDD), it represents a release with only third-party package (Electron) updates.
 
 
+## [v1.5.2] - 2026-10-10
+- fix: Include Facebook end-to-end encrypted `/messages/e2ee/t/` conversations in row discovery and notification IPC validation
+- test: Add end-to-end coverage for E2EE conversation notification routing
+
 ## [v1.5.1] - 2026-10-09
 - fix: Recognize trailing blue unread dots in conversation layouts with regular-weight previews, including delayed dot updates
 - fix: Detect unread styling that updates after message previews and distinguish repeated preview transitions

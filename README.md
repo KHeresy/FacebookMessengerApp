@@ -16,7 +16,7 @@ A lightweight, Electron-based desktop application for [Facebook Messenger](https
 *   **Security & Privacy**: External links and Facebook tracking URLs are automatically opened in your default browser for safety.
 *   **Window State Management**: Remembers your window size and position.
 
-Messenger-only unread detection supports both bold previews and small blue unread dots at the trailing edge of conversation rows. Avatar presence dots are excluded. A newly changed preview is still required to distinguish incoming messages from manually marking a conversation unread.
+Messenger-only unread detection supports standard and end-to-end encrypted Facebook conversation links (`/messages/e2ee/t/`), bold previews, and small blue unread dots at the trailing edge of conversation rows. Avatar presence dots are excluded. A newly changed preview is still required to distinguish incoming messages from manually marking a conversation unread.
 
 ## Installation
 
