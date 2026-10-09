@@ -154,7 +154,8 @@ if (!gotTheLock) {
       const { hostname, pathname, protocol } = new URL(url);
       if (protocol !== 'https:') return false;
       if (hostname === 'www.facebook.com' || hostname === 'm.facebook.com') {
-        return pathname === '/messages' || pathname === '/messages/' || pathname.startsWith('/messages/t/');
+        return pathname === '/messages' || pathname === '/messages/' ||
+          pathname.startsWith('/messages/t/') || pathname.startsWith('/messages/e2ee/t/');
       }
       return (hostname === 'www.messenger.com' || hostname === 'm.messenger.com') &&
         (pathname === '/' || pathname.startsWith('/t/'));

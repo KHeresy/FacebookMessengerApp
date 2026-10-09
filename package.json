@@ -1,6 +1,6 @@
 {
 	"name": "fbm",
-	"version": "1.5.1",
+	"version": "1.5.2",
 	"description": "Facebook Messenger desktop app",
 	"main": "main.js",
 	"scripts": {
@@ -27,6 +27,10 @@
 		"directories": {
 			"output": "dist"
 		},
+		"files": [
+			"**/*",
+			"!page.html"
+		],
 		"win": {
 			"target": "nsis",
 			"icon": "icon.ico",

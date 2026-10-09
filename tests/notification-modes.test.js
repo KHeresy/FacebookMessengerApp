@@ -217,7 +217,7 @@ function startPreload(onSend = () => {}) {
     update: () => vm.runInContext('updateBadge()', context),
     refresh: () => listeners.get('refresh-messenger-state')(),
     changes: () => messages.filter(([channel]) => channel === 'messenger-conversation-change'),
-    thread: (id, preview, bold) => {
+    thread: (id, preview, bold, href = `/messages/t/${id}/`) => {
       const previewNode = { textContent: preview, fontWeight: bold ? '700' : '400', querySelector: () => null };
       const row = {
         dots: [],
@@ -226,7 +226,7 @@ function startPreload(onSend = () => {}) {
         querySelectorAll: selector => selector === '[dir="auto"]' ?
           [{ textContent: `Name ${id}`, querySelector: () => null }, previewNode] : row.dots
       };
-      return { row, preview: previewNode, getAttribute: () => `/messages/t/${id}/`, closest: () => row };
+      return { row, preview: previewNode, getAttribute: () => href, closest: () => row };
     },
     dot: (options = {}) => {
       const { left = 254, top = 30, size = 12, color = 'rgb(0, 100, 230)', radius = '50%',
@@ -1090,4 +1090,24 @@ test('a blue-dot unread row prevents an empty navigation badge from clearing its
   row.row.dots = [];
   state.update();
   assert.equal(state.messages.filter(([channel]) => channel === 'messenger-unread-count').at(-1)[1], 0);
+});
+
+test('Facebook E2EE conversation links are scanned and their IPC notification is accepted', async () => {
+  const state = startApp();
+  await state.ready();
+  state.tick(6000);
+  state.window.url = 'https://www.facebook.com/messages/e2ee/t/27146404911639725/';
+  const preload = startPreload((...args) => state.relay(...args));
+  const row = preload.thread('27146404911639725', 'Earlier message', false,
+    '/messages/e2ee/t/27146404911639725/');
+  preload.rows([row]);
+  preload.update();
+  row.preview.textContent = 'New E2EE message';
+  row.row.dots = [preload.dot()];
+  preload.update();
+  state.advance(600);
+
+  assert.equal(preload.changes().length, 1);
+  assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].body, 'New E2EE message');
 });

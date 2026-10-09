@@ -114,14 +114,14 @@ function hasUnreadDot(row) {
 
 function getConversationSnapshot() {
     const threads = new Map();
-    const links = document.querySelectorAll('a[href*="/messages/t/"], a[href^="/t/"]');
+    const links = document.querySelectorAll('a[href*="/messages/t/"], a[href*="/messages/e2ee/t/"], a[href^="/t/"]');
     for (const link of links) {
         if (threads.size >= 100) break;
         const href = link.getAttribute('href');
         if (!href) continue;
         let url;
         try { url = new URL(href, location.href); } catch { continue; }
-        const match = url.pathname.match(/^\/(?:messages\/)?t\/([^/]+)\/?$/);
+        const match = url.pathname.match(/^\/(?:(?:messages\/(?:e2ee\/)?)?t)\/([^/]+)\/?$/);
         if (!match || !['www.facebook.com', 'm.facebook.com', 'www.messenger.com', 'm.messenger.com'].includes(url.hostname)) continue;
 
         const row = link.closest('[role="row"], [role="listitem"]') || link;
