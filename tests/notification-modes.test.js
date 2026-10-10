@@ -145,12 +145,19 @@ function startApp() {
         senderFrame: window.webContents.mainFrame
       }, count);
     },
-    conversationChange: (id, url = 'https://www.facebook.com/messages/t/123/', message = id, preview = '') => {
+    blueDots: (hasBlueDot, url = 'https://www.facebook.com/messages/') => {
+      window.url = url;
+      handlers.emit('messenger-blue-dot-state', {
+        sender: window.webContents,
+        senderFrame: window.webContents.mainFrame
+      }, hasBlueDot);
+    },
+    conversationChange: (id, url = 'https://www.facebook.com/messages/t/123/', message = id, preview = '', sender = '') => {
       window.url = url;
       handlers.emit('messenger-conversation-change', {
         sender: window.webContents,
         senderFrame: window.webContents.mainFrame
-      }, { thread: id, message, preview });
+      }, { thread: id, message, preview, sender });
     },
     conversationRead: (id, url = 'https://www.facebook.com/messages/t/123/') => {
       window.url = url;
@@ -167,6 +174,7 @@ function startApp() {
       sender: window.webContents,
       senderFrame: window.webContents.mainFrame
     }, ...args),
+    relayFrom: (event, channel, ...args) => handlers.emit(channel, event, ...args),
     registerAttentionIcon: () => handlers.emit('register-attention-icon', {
       sender: window.webContents,
       senderFrame: window.webContents.mainFrame
@@ -217,12 +225,15 @@ function startPreload(onSend = () => {}) {
     update: () => vm.runInContext('updateBadge()', context),
     refresh: () => listeners.get('refresh-messenger-state')(),
     changes: () => messages.filter(([channel]) => channel === 'messenger-conversation-change'),
+    blueDotReports: () => messages.filter(([channel]) => channel === 'messenger-blue-dot-state').map(([, value]) => value),
     thread: (id, preview, bold, href = `/messages/t/${id}/`) => {
       const previewNode = { textContent: preview, fontWeight: bold ? '700' : '400', querySelector: () => null };
+      const avatar = { getBoundingClientRect: () => ({ left: 0, right: 48, top: 12, bottom: 60, width: 48, height: 48 }) };
       const row = {
         dots: [],
         style: { direction: 'ltr' },
         getBoundingClientRect: () => ({ left: 0, right: 280, top: 0, bottom: 72, width: 280, height: 72 }),
+        querySelector: selector => selector === 'img' ? avatar : null,
         querySelectorAll: selector => selector === '[dir="auto"]' ?
           [{ textContent: `Name ${id}`, querySelector: () => null }, previewNode] : row.dots
       };
@@ -260,7 +271,6 @@ test('the two modes are exclusive and persisted; web permissions follow the glob
   state.tick(6000);
   state.report(0);
   state.report(1);
-  state.window.emit('page-title-updated', {}, 'Sent you a message');
   state.fireTimers();
   assert.equal(state.notifications.length, 0);
 
@@ -269,6 +279,46 @@ test('the two modes are exclusive and persisted; web permissions follow the glob
   assert.equal(state.permissions.check(null, 'notifications', 'https://www.facebook.com'), false);
   mode.submenu[1].click();
   assert.equal(state.permissions.check(null, 'notifications', 'https://www.facebook.com'), false);
+});
+
+test('notification interval choices persist and control the minimum delay between toasts', async () => {
+  const choices = [
+    { label: '關閉', delay: 0 },
+    { label: '0.5 秒', delay: 500 },
+    { label: '1 秒', delay: 1000 },
+    { label: '2 秒', delay: 2000 }
+  ];
+
+  for (const choice of choices) {
+    const state = startApp();
+    await state.ready();
+    const interval = state.menu.find(item => item.label === '檢視').submenu
+      .find(item => item.label === '通知間隔');
+    const option = interval.submenu.find(item => item.label === choice.label);
+    assert.equal(option.type, 'radio');
+    assert.equal(option.checked, choice.delay === 1000);
+    if (choice.delay !== 1000) {
+      option.click();
+      assert.equal(state.savedConfigs.at(-1).notificationCooldownMs, choice.delay);
+    }
+
+    state.tick(6000);
+    state.conversationChange('aabbccdd', undefined, '00000001', 'First');
+    state.advance(0);
+    assert.equal(state.notifications.length, 1);
+    state.advance(100);
+    state.conversationChange('aabbccdd', undefined, '00000002', 'Second');
+
+    if (choice.delay === 0) {
+      state.advance(0);
+      assert.equal(state.notifications.length, 2);
+    } else {
+      state.advance(choice.delay - 101);
+      assert.equal(state.notifications.length, 1);
+      state.advance(1);
+      assert.equal(state.notifications.length, 2);
+    }
+  }
 });
 
 test('Messenger-only mode ignores existing unread counts, groups increases, and cancels stale alerts', async () => {
@@ -343,76 +393,38 @@ test('same-document and subframe navigations do not discard the current unread b
   assert.equal(state.notifications.length, 1);
 });
 
-test('a Messenger title change notifies when its navigation badge is unavailable', async () => {
+test('page title updates do not trigger Messenger-only notifications', async () => {
   const state = startApp();
   await state.ready();
   state.tick(6000);
   state.report(null, 'https://www.facebook.com/messages/t/123/');
-  const title = value => state.window.emit('page-title-updated', {}, value);
-
-  title('Messenger | Facebook');
-  title('(1) Messenger | Facebook');
-  title('(1) Someone');
+  state.window.emit('page-title-updated', {}, 'Sent you a message');
+  state.window.emit('page-title-updated', {}, 'Another message');
   state.fireTimers();
   assert.equal(state.notifications.length, 0);
-
-  title('Sent you a message');
-  state.fireTimers();
-  assert.equal(state.notifications.length, 1);
-
-  title('Another message'); // The same arrival should not produce a second alert.
-  state.fireTimers();
-  assert.equal(state.notifications.length, 1);
-
-  state.tick(10000);
-  state.window.url = 'https://www.facebook.com/notifications/';
-  title('Some other Facebook activity');
-  state.fireTimers();
-  assert.equal(state.notifications.length, 1);
-
-  state.window.url = 'https://www.facebook.com/messages/t/123/';
-  state.window.focused = true;
-  title('A focused conversation');
-  state.fireTimers();
-  assert.equal(state.notifications.length, 1);
-
-  state.window.focused = false;
-  title('An incoming message');
-  state.window.emit('focus');
-  state.fireTimers();
-  assert.equal(state.notifications.length, 1);
 });
 
-test('badge and title signals for the same Messenger arrival produce one alert', async () => {
+test('badge count increases notify without relying on page titles', async () => {
   const state = startApp();
   await state.ready();
   state.tick(6000);
   state.report(0);
   state.report(1);
-  state.window.emit('page-title-updated', {}, 'Sent you a message');
   state.fireTimers();
   assert.equal(state.notifications.length, 1);
 
-  state.tick(10000);
-  state.report(null);
-  state.window.emit('page-title-updated', {}, 'New message');
-  state.fireTimers();
-  assert.equal(state.notifications.length, 1);
-  state.window.clearUnreadAttention();
-  state.tick(12000);
-  state.window.emit('page-title-updated', {}, 'Another new message');
+  state.report(2);
   state.fireTimers();
   assert.equal(state.notifications.length, 2);
 });
 
-test('conversation changes win over badge and title signals without leaking message text', async () => {
+test('conversation changes win over badge signals without leaking message text', async () => {
   const state = startApp();
   await state.ready();
   state.tick(6000);
   state.report(0);
   state.conversationChange('aabbccdd');
   state.report(1, 'https://www.facebook.com/messages/t/123/');
-  state.window.emit('page-title-updated', {}, 'Someone sent a message');
   state.fireTimers();
   assert.equal(state.notifications.length, 1);
   assert.equal(state.notifications[0].body, '有新的 Messenger 訊息');
@@ -443,7 +455,6 @@ test('an unread alert persists after focus while a distinct new conversation sti
   state.window.emit('focus');
   assert.equal(state.window.overlays.at(-1).icon.dataUrl, 'data:image/png;base64,AAAA');
   state.tick(12000);
-  state.window.emit('page-title-updated', {}, 'Another message while unread');
   state.conversationChange('bbccddee', 'https://www.facebook.com/messages/t/123/', '00000001');
   state.fireTimers();
   assert.equal(state.notifications.length, 2);
@@ -454,6 +465,30 @@ test('an unread alert persists after focus while a distinct new conversation sti
   state.fireTimers();
   assert.equal(state.notifications.length, 2);
   state.conversationRead('bbccddee');
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('a confirmed blue-dot state controls taskbar artwork without suppressing preview notifications', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.report(2);
+  state.badgeOverlay('data:image/png;base64,BBBB', '2');
+  assert.equal(state.window.overlays.at(-1).text, '2');
+
+  state.blueDots(false);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+  state.blueDots(true);
+  assert.equal(state.window.overlays.at(-1).icon.dataUrl, 'data:image/png;base64,AAAA');
+  state.badgeOverlay(null, '');
+  assert.equal(state.window.overlays.at(-1).icon.dataUrl, 'data:image/png;base64,AAAA');
+  state.blueDots(false);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+
+  state.tick(6000);
+  state.conversationChange('aabbccdd', undefined, '00000001', 'Preview stays enabled');
+  state.fireTimers();
+  assert.equal(state.notifications.at(-1).body, 'Preview stays enabled');
   assert.equal(state.window.overlays.at(-1).icon, null);
 });
 
@@ -483,8 +518,9 @@ test('verified conversation notifications show a bounded preview and respect the
   state.tick(6000);
   state.report(0);
   state.report(1); // A badge arrives before the more informative conversation signal.
-  state.conversationChange('aabbccdd', undefined, '00000001', '  Hello\n there  ');
+  state.conversationChange('aabbccdd', undefined, '00000001', '  Hello\n there  ', 'Alice');
   state.fireTimers();
+  assert.equal(state.notifications[0].title, 'Alice');
   assert.equal(state.notifications[0].body, 'Hello there');
 
   const view = state.menu.find(item => item.label === '檢視');
@@ -493,14 +529,16 @@ test('verified conversation notifications show a bounded preview and respect the
   previewToggle.click({ checked: false });
   assert.equal(state.savedConfigs.at(-1).showMessagePreviews, false);
   state.tick(11000);
-  state.conversationChange('aabbccdd', undefined, '00000002', 'Another private message');
+  state.conversationChange('aabbccdd', undefined, '00000002', 'Another private message', 'Alice');
   state.fireTimers();
+  assert.equal(state.notifications[1].title, 'Messenger');
   assert.equal(state.notifications[1].body, '有新的 Messenger 訊息');
 
   previewToggle.click({ checked: true });
   state.tick(16000);
-  state.conversationChange('aabbccdd', undefined, '00000003', '\u202eSecret\tmessage');
+  state.conversationChange('aabbccdd', undefined, '00000003', '\u202eSecret\tmessage', 'Alice');
   state.fireTimers();
+  assert.equal(state.notifications[2].title, 'Alice');
   assert.equal(state.notifications[2].body, 'Secret message');
 
   state.tick(21000);
@@ -512,20 +550,40 @@ test('verified conversation notifications show a bounded preview and respect the
   assert.equal(Array.from(state.notifications[3].body).length, 160);
 });
 
-test('unmatched and grouped signals use generic text rather than a misleading preview', async () => {
+test('grouped conversations combine their message previews', async () => {
   const state = startApp();
   await state.ready();
   state.tick(6000);
-  state.window.url = 'https://www.facebook.com/messages/';
-  state.window.emit('page-title-updated', {}, 'Message without a verified preview');
+  state.conversationChange('aabbccdd', undefined, '00000001', 'First message', 'Group chat');
+  state.conversationChange('bbccddee', undefined, '00000002', 'Bob: Second message', 'Group chat');
   state.fireTimers();
-  assert.equal(state.notifications[0].body, '有新的 Messenger 訊息');
+  assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].title, 'Messenger');
+  assert.equal(state.notifications[0].body, 'Group chat: First message\nBob: Second message');
+});
 
-  state.tick(11000);
-  state.conversationChange('aabbccdd', undefined, '00000001', 'First message');
-  state.conversationChange('bbccddee', undefined, '00000002', 'Second message');
+test('grouped previews keep a shared sender in the notification title', async () => {
+  const state = startApp();
+  await state.ready();
+  state.tick(6000);
+  state.conversationChange('aabbccdd', undefined, '00000001', 'First', 'Alice');
+  state.conversationChange('bbccddee', undefined, '00000002', 'Second', 'Alice');
   state.fireTimers();
-  assert.equal(state.notifications[1].body, '有新的 Messenger 訊息');
+  assert.equal(state.notifications[0].title, 'Alice');
+  assert.equal(state.notifications[0].body, 'First\nSecond');
+});
+
+test('combined message previews stay within the notification length limit', async () => {
+  const state = startApp();
+  await state.ready();
+  state.tick(6000);
+  for (let index = 0; index < 4; index++) {
+    state.conversationChange(`0000000${index}`, undefined, `1000000${index}`, String(index).repeat(160));
+  }
+  state.fireTimers();
+  const body = state.notifications[0].body;
+  assert.equal(Array.from(body).length, 500);
+  assert.ok(body.endsWith('…'));
 });
 
 test('a higher Messenger unread count can notify while the previous alert is still pending', async () => {
@@ -548,38 +606,15 @@ test('a higher Messenger unread count can notify while the previous alert is sti
   assert.equal(state.notifications.length, 2);
 });
 
-test('title-only alerts stay visible until explicitly dismissed', async () => {
-  const state = startApp();
-  await state.ready();
-  state.registerAttentionIcon();
-  state.tick(6000);
-  state.window.url = 'https://www.facebook.com/messages/';
-  state.window.emit('page-title-updated', {}, 'Message preview');
-  state.fireTimers();
-  state.tick(12000);
-  state.window.emit('page-title-updated', {}, 'Another preview');
-  state.fireTimers();
-  assert.equal(state.notifications.length, 2);
-  assert.ok(state.window.overlays.at(-1).icon);
-
-  state.badgeOverlay('data:image/png;base64,BBBB', '3');
-  const view = state.menu.find(item => item.label === '檢視');
-  view.submenu.find(item => item.label === '清除未讀提示').click();
-  assert.equal(state.window.overlays.at(-1).icon, null);
-  state.tick(16000);
-  state.window.emit('page-title-updated', {}, 'Fresh message');
-  state.fireTimers();
-  assert.equal(state.notifications.length, 3);
-});
-
 test('renderer clearing an absent badge does not erase pending attention; a positive unread count returning to zero does', async () => {
   const state = startApp();
   await state.ready();
   state.registerAttentionIcon();
   state.tick(6000);
-  state.window.url = 'https://www.facebook.com/messages/';
-  state.window.emit('page-title-updated', {}, 'New message');
+  state.report(0);
+  state.report(1);
   state.fireTimers();
+  assert.equal(state.notifications.length, 1);
   state.badgeOverlay(null, '');
   assert.equal(state.window.overlays.at(-1).icon.dataUrl, 'data:image/png;base64,AAAA');
 
@@ -595,10 +630,14 @@ test('preload only accepts numeric badges inside the Messenger control', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
   let control = null;
   let now = 0;
+  const queriedSelectors = [];
   const context = vm.createContext({
     require: () => ({ ipcRenderer: { sendSync: () => false, on: () => {} } }),
     window: { addEventListener: () => {} },
-    document: { querySelectorAll: () => control ? [control] : [] },
+    document: { querySelectorAll: selector => {
+      queriedSelectors.push(selector);
+      return control ? [control] : [];
+    } },
     Date: { now: () => now },
     console
   });
@@ -606,6 +645,9 @@ test('preload only accepts numeric badges inside the Messenger control', () => {
   const signal = () => vm.runInContext('getMessengerUnreadSignal()', context);
 
   assert.equal(signal(), null);
+  assert.ok(queriedSelectors.length > 0);
+  assert.ok(queriedSelectors.every(selector => !selector.includes('訊息')));
+  assert.ok(queriedSelectors.every(selector => !selector.includes('a[href="/messages/"]')));
   let badges = [];
   control = { querySelectorAll: () => badges };
   assert.equal(signal(), null); // Unrecognized empty controls are not reliable zero.
@@ -678,7 +720,9 @@ test('conversation snapshots ignore initial unread, new rows and manual unread; 
   assert.match(changes()[0][1].message, /^[0-9a-f]{8}$/);
   assert.notEqual(changes()[0][1].thread, changes()[0][1].message);
   assert.equal(changes()[0][1].preview, 'New incoming message');
+  assert.equal(changes()[0][1].sender, 'Alice');
   assert.equal(vm.runInContext('knownThreads.get("123").previewText', context), undefined);
+  assert.equal(vm.runInContext('knownThreads.get("123").sender', context), undefined);
 
   rows[0] = thread('123', 'Alice', 'Another incoming message', true);
   rows[0].closest().querySelectorAll()[1].fontWeight = 'bold';
@@ -700,7 +744,7 @@ test('confirmed zero cancels a pending conversation toast and clears stale numer
   state.report(1);
   state.badgeOverlay('data:image/png;base64,BBBB', '1');
   state.conversationChange('aabbccdd', undefined, '00000001', 'Already read before toast');
-  state.advance(300);
+  // A confirmed read in the same event turn cancels the immediate timer.
   state.report(0);
   state.advance(3000);
   assert.equal(state.notifications.length, 0);
@@ -709,17 +753,18 @@ test('confirmed zero cancels a pending conversation toast and clears stale numer
   assert.equal(state.window.overlays.at(-1).icon, null);
 });
 
-test('a first reliable zero clears an earlier unknown title alert', async () => {
+test('a confirmed zero cancels a pending badge alert', async () => {
   const state = startApp();
   await state.ready();
   state.registerAttentionIcon();
   state.tick(6000);
-  state.report(null);
-  state.window.emit('page-title-updated', {}, 'Message preview');
-  state.advance(1400);
-  assert.ok(state.window.overlays.at(-1).icon);
+  state.report(0);
+  state.report(1);
+  state.advance(500);
   state.report(0);
   assert.equal(state.window.overlays.at(-1).icon, null);
+  state.advance(2000);
+  assert.equal(state.notifications.length, 0);
 });
 
 test('a focused scan acknowledges weak alerts without clearing confirmed unread conversations', async () => {
@@ -727,8 +772,8 @@ test('a focused scan acknowledges weak alerts without clearing confirmed unread 
   await state.ready();
   state.registerAttentionIcon();
   state.tick(6000);
-  state.report(null);
-  state.window.emit('page-title-updated', {}, 'Message for an unidentified conversation');
+  state.report(0);
+  state.report(1);
   state.advance(1400);
   state.advance(3000);
   state.conversationChange('aabbccdd');
@@ -742,13 +787,13 @@ test('a focused scan acknowledges weak alerts without clearing confirmed unread 
   assert.equal(state.window.overlays.at(-1).icon, null);
 });
 
-test('a title-only alert on a conversation URL clears after focus and rescan', async () => {
+test('a weak badge alert on a conversation URL clears after focus and rescan', async () => {
   const state = startApp();
   await state.ready();
   state.registerAttentionIcon();
   state.tick(6000);
-  state.report(null, 'https://www.facebook.com/messages/t/123/');
-  state.window.emit('page-title-updated', {}, 'A message from another conversation');
+  state.report(0, 'https://www.facebook.com/messages/t/123/');
+  state.report(1, 'https://www.facebook.com/messages/t/123/');
   state.advance(1400);
   state.scan(); // Background scans do not acknowledge the alert.
   assert.ok(state.window.overlays.at(-1).icon);
@@ -758,20 +803,22 @@ test('a title-only alert on a conversation URL clears after focus and rescan', a
   assert.equal(state.window.overlays.at(-1).icon, null);
 });
 
-test('distinct messages during cooldown are delayed and grouped, not lost', async () => {
+test('the first conversation notification is immediate; cooldown messages are delayed and grouped', async () => {
   const state = startApp();
   await state.ready();
   state.tick(6000);
   state.conversationChange('aabbccdd', undefined, '00000001', 'First');
-  state.advance(600);
+  state.advance(0);
+  assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].body, 'First');
   state.advance(100);
   state.conversationChange('aabbccdd', undefined, '00000002', 'Second');
   state.conversationChange('bbccddee', undefined, '00000003', 'Third');
-  state.advance(2399);
+  state.advance(899);
   assert.equal(state.notifications.length, 1);
   state.advance(1);
   assert.equal(state.notifications.length, 2);
-  assert.equal(state.notifications[1].body, '有新的 Messenger 訊息');
+  assert.equal(state.notifications[1].body, 'Second\nThird');
 });
 
 test('reading a cooldown message cancels its delayed toast', async () => {
@@ -780,7 +827,7 @@ test('reading a cooldown message cancels its delayed toast', async () => {
   state.registerAttentionIcon();
   state.tick(6000);
   state.conversationChange('aabbccdd', undefined, '00000001');
-  state.advance(600);
+  state.advance(0);
   state.conversationChange('aabbccdd', undefined, '00000002');
   state.conversationRead('aabbccdd');
   state.advance(3000);
@@ -795,7 +842,7 @@ test('reading one grouped conversation leaves only the remaining preview in the 
   state.conversationChange('aabbccdd', undefined, '00000001', 'Read message');
   state.conversationChange('bbccddee', undefined, '00000002', 'Still unread');
   state.conversationRead('aabbccdd');
-  state.advance(600);
+  state.advance(0);
   assert.equal(state.notifications[0].body, 'Still unread');
 });
 
@@ -824,7 +871,7 @@ test('later badge arrivals during cooldown are delayed while same-arrival hydrat
   state.tick(6000);
   state.report(0);
   state.conversationChange('aabbccdd');
-  state.advance(600);
+  state.advance(0);
   state.report(1); // Badge hydration of the already-notified conversation.
   state.advance(1400);
   assert.equal(state.notifications.length, 1);
@@ -859,7 +906,7 @@ test('confirmed read clears a lagging badge of one, but does not hide other unre
   state.report(1);
   state.badgeOverlay('data:image/png;base64,BBBB', '1');
   state.conversationChange('aabbccdd');
-  state.advance(600);
+  state.advance(0);
   state.conversationRead('aabbccdd');
   state.badgeOverlay('data:image/png;base64,BBBB', '1');
   assert.equal(state.window.overlays.at(-1).icon, null);
@@ -925,7 +972,7 @@ test('a visible unread conversation prevents an empty badge from reporting globa
   assert.equal(state.messages.filter(([channel]) => channel === 'messenger-unread-count').at(-1)[1], 0);
 });
 
-test('renderer refresh reconciles confirmed reads and weak alerts together after returning to Messenger', async () => {
+test('renderer refresh does not restore taskbar artwork when no unread blue dot is present', async () => {
   const state = startApp();
   await state.ready();
   state.registerAttentionIcon();
@@ -934,18 +981,17 @@ test('renderer refresh reconciles confirmed reads and weak alerts together after
   const row = preload.thread('123', 'Earlier', false);
   preload.rows([row]);
   preload.update();
-  state.window.emit('page-title-updated', {}, 'Unidentified new message');
-  state.advance(1400);
-  state.advance(3000);
+  preload.tick(1500);
+  preload.update();
   row.preview.textContent = 'Confirmed incoming';
   row.preview.fontWeight = '700';
   preload.update();
   state.advance(600);
-  assert.equal(state.notifications.length, 2);
+  assert.equal(state.notifications.length, 1);
   state.window.focused = true;
   state.window.emit('focus');
   preload.refresh();
-  assert.ok(state.window.overlays.at(-1).icon); // Confirmed unread survives acknowledgement.
+  assert.equal(state.window.overlays.at(-1).icon, null); // Bold preview still drives toast detection, not taskbar artwork.
   row.preview.fontWeight = '400';
   preload.refresh();
   assert.equal(state.window.overlays.at(-1).icon, null);
@@ -996,7 +1042,7 @@ test('a late conversation signal refines a badge toast while its next distinct m
   state.advance(700);
   assert.equal(state.notifications.length, 1);
   state.conversationChange('aabbccdd', undefined, '00000002', 'A distinct next message');
-  state.advance(1699);
+  state.advance(199);
   assert.equal(state.notifications.length, 1);
   state.advance(1);
   assert.equal(state.notifications.length, 2);
@@ -1020,11 +1066,166 @@ test('a trailing blue unread dot detects a new regular-weight preview and its re
   state.advance(600);
   assert.equal(preload.changes().length, 1);
   assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].title, 'Name 123');
   assert.equal(state.notifications[0].body, 'test');
   assert.ok(state.window.overlays.at(-1).icon);
   row.row.dots = [];
   preload.update();
+  assert.ok(state.window.overlays.at(-1).icon); // A transient dot removal does not clear artwork.
+  preload.tick(1500);
+  preload.update();
   assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('manual taskbar dismissal keeps queued previews and restores only for a new arrival or a dot transition', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.tick(6000);
+  state.blueDots(true);
+  state.conversationChange('aabbccdd', undefined, '00000001', 'Queued preview');
+  const view = state.menu.find(item => item.label === '檢視');
+  const clear = view.submenu.find(item => item.label === '清除未讀提示');
+  clear.click();
+  assert.equal(state.window.overlays.at(-1).icon, null);
+  state.blueDots(true);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+  state.advance(0);
+  assert.equal(state.notifications[0].body, 'Queued preview');
+  assert.ok(state.window.overlays.at(-1).icon);
+
+  clear.click();
+  state.blueDots(null);
+  state.blueDots(true);
+  assert.equal(state.window.overlays.at(-1).icon, null); // Unloading is not a read/unread transition.
+  state.window.webContents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+  state.blueDots(true);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+  state.blueDots(false);
+  state.blueDots(true);
+  assert.ok(state.window.overlays.at(-1).icon);
+});
+
+test('an unavailable conversation list preserves artwork despite badge and notification updates', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.blueDots(true);
+  state.blueDots(null);
+  state.report(0);
+  state.badgeOverlay(null, '');
+  state.window.webContents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+  assert.ok(state.window.overlays.at(-1).icon);
+  state.blueDots(false);
+  state.tick(6000);
+  state.blueDots(null);
+  state.conversationChange('aabbccdd', undefined, '00000001', 'Still notify');
+  state.fireTimers();
+  assert.equal(state.notifications[0].body, 'Still notify');
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('notification switches respect current dot state and do not create initial-preview alerts', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.blueDots(true);
+  const view = state.menu.find(item => item.label === '檢視');
+  const enabled = view.submenu.find(item => item.label === '啟用背景通知');
+  enabled.click({ checked: false });
+  state.blueDots(true);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+  enabled.click({ checked: true });
+  assert.ok(state.window.overlays.at(-1).icon);
+  const mode = view.submenu.find(item => item.label === '通知模式');
+  mode.submenu[0].click();
+  assert.ok(state.window.overlays.at(-1).icon);
+  mode.submenu[1].click();
+  assert.ok(state.window.overlays.at(-1).icon);
+  state.fireTimers();
+  assert.equal(state.notifications.length, 0);
+});
+
+test('blue-dot IPC rejects subframes, other senders, invalid states and non-conversation pages', async () => {
+  const state = startApp();
+  await state.ready();
+  state.registerAttentionIcon();
+  state.blueDots(false);
+  state.blueDots('true');
+  state.blueDots(true, 'https://www.facebook.com/notifications/');
+  state.window.url = 'https://www.facebook.com/messages/';
+  state.relayFrom({ sender: state.window.webContents, senderFrame: {} }, 'messenger-blue-dot-state', true);
+  state.relayFrom({ sender: {}, senderFrame: state.window.webContents.mainFrame }, 'messenger-blue-dot-state', true);
+  assert.equal(state.window.overlays.at(-1).icon, null);
+});
+
+test('preload reports current blue-dot state independently of preview weight and preserves it while rows are unavailable', () => {
+  const state = startPreload();
+  const row = state.thread('123', 'Existing preview', true);
+  state.rows([row]);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), []);
+  state.tick(1500);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [false]);
+
+  row.row.dots = [state.dot()];
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [false, true]);
+
+  row.row.dots = [];
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [false, true]);
+  state.tick(3000);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [false, true, false]);
+
+  state.rows([]);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [false, true, false, null]);
+});
+
+test('blue-dot monitoring works without a preview and restarts clear confirmation after unloading', () => {
+  const state = startPreload();
+  const row = state.thread('123', '', false);
+  row.row.dots = [state.dot()];
+  state.rows([row]);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [true]);
+  assert.equal(state.changes().length, 0);
+
+  row.row.dots = [];
+  state.update();
+  state.tick(1499);
+  state.refresh();
+  assert.deepEqual(state.blueDotReports(), [true]);
+  row.row.dots = [state.dot()];
+  state.update(); // A transient disappearance cannot complete a clear.
+  row.row.dots = [];
+  state.update();
+  state.rows([]);
+  state.update();
+  state.tick(5000);
+  state.rows([row]);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [true, true, null]); // Refresh re-reports the next confirmed state.
+  state.tick(6500);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [true, true, null, false]);
+});
+
+test('hidden rows cannot confirm an empty blue-dot state', () => {
+  const state = startPreload();
+  const row = state.thread('123', 'Earlier', false);
+  row.row.dots = [state.dot()];
+  state.rows([row]);
+  state.update();
+  row.row.dots = [];
+  row.row.getBoundingClientRect = () => ({ width: 0, height: 0 });
+  state.update();
+  state.tick(10000);
+  state.update();
+  assert.deepEqual(state.blueDotReports(), [true, null]);
 });
 
 test('an unread dot that arrives after preview text triggers once; initial and manual dots do not notify', () => {
@@ -1105,9 +1306,10 @@ test('Facebook E2EE conversation links are scanned and their IPC notification is
   row.preview.textContent = 'New E2EE message';
   row.row.dots = [preload.dot()];
   preload.update();
-  state.advance(600);
+  state.advance(0);
 
   assert.equal(preload.changes().length, 1);
   assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].title, 'Name 27146404911639725');
   assert.equal(state.notifications[0].body, 'New E2EE message');
 });

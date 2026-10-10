@@ -17,11 +17,9 @@ const recognizedBadgeControls = new WeakSet();
 let zeroBadgeSince = null;
 function getMessengerUnreadSignal() {
     const messengerSelectors = [
-        'a[href="/messages/"], a[href="/messages"]',
+        'a[href="/messages"]',
         'div[role="button"][aria-label*="Messenger"]',
-        'div[role="button"][aria-label*="訊息"]',
-        'div[aria-label="Messenger"]',
-        'div[aria-label="訊息"]'
+        'div[aria-label="Messenger"]'
     ];
     
     let recognizedControl = false;
@@ -62,7 +60,7 @@ function getMessengerUnreadCount(count = getMessengerUnreadSignal()) {
     const title = document.title;
     const match = title.match(/^\((\d+)\)/);
     if (match) {
-        const isGeneric = title.includes('Messenger | Facebook') || title.includes('Messages | Facebook') || title.includes('Facebook');
+        const isGeneric = title.includes('Facebook');
         if (!isGeneric) return parseInt(match[1], 10);
     }
     return 0;
@@ -80,21 +78,22 @@ function fingerprint(value) {
 }
 
 function hasUnreadDot(row) {
-    // Some Messenger layouts use a blue dot instead of bold preview text. Scope
-    // the visual fallback to a small, empty circle on the trailing side of one
-    // conversation row; avatar presence dots and blue buttons are not unread.
+    // Scope the visual fallback to a small, empty blue circle in one conversation
+    // row. Exclude dots that overlap the avatar so presence indicators do not count.
     const rowRect = row.getBoundingClientRect();
     if (rowRect.width <= 0 || rowRect.height <= 0) return false;
-    const rtl = window.getComputedStyle(row).direction === 'rtl';
+    const avatar = row.querySelector('img');
+    const avatarRect = avatar?.getBoundingClientRect();
     const candidates = row.querySelectorAll('span, div');
     for (const element of candidates) {
         if (element.textContent.trim()) continue;
         const rect = element.getBoundingClientRect();
         if (rect.width < 6 || rect.width > 16 || rect.height < 6 || rect.height > 16 ||
             Math.abs(rect.width - rect.height) > 2 ||
-            (rtl ? rect.right > rowRect.left + rowRect.width * 0.3 : rect.left < rowRect.left + rowRect.width * 0.7) ||
             rect.left < rowRect.left - 1 || rect.right > rowRect.right + 1 ||
             rect.top < rowRect.top || rect.bottom > rowRect.bottom) continue;
+        if (avatarRect && rect.left < avatarRect.right && rect.right > avatarRect.left &&
+            rect.top < avatarRect.bottom && rect.bottom > avatarRect.top) continue;
         const style = window.getComputedStyle(element);
         if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) continue;
         const color = style.backgroundColor.match(/^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/);
@@ -114,9 +113,13 @@ function hasUnreadDot(row) {
 
 function getConversationSnapshot() {
     const threads = new Map();
+    const scannedRows = new Set();
+    let available = false;
+    let hasBlueDot = false;
+    let visibleUnread = false;
     const links = document.querySelectorAll('a[href*="/messages/t/"], a[href*="/messages/e2ee/t/"], a[href^="/t/"]');
     for (const link of links) {
-        if (threads.size >= 100) break;
+        if (scannedRows.size >= 100) break;
         const href = link.getAttribute('href');
         if (!href) continue;
         let url;
@@ -125,11 +128,19 @@ function getConversationSnapshot() {
         if (!match || !['www.facebook.com', 'm.facebook.com', 'www.messenger.com', 'm.messenger.com'].includes(url.hostname)) continue;
 
         const row = link.closest('[role="row"], [role="listitem"]') || link;
+        if (scannedRows.has(row)) continue;
+        scannedRows.add(row);
+        const rowRect = row.getBoundingClientRect();
+        available ||= rowRect.width > 0 && rowRect.height > 0;
+        const unreadDot = hasUnreadDot(row);
+        hasBlueDot ||= unreadDot;
+        visibleUnread ||= unreadDot;
         const texts = [...row.querySelectorAll('[dir="auto"]')]
             .filter(element => !element.querySelector('[dir="auto"]') && element.textContent.trim());
         // The first text node is typically the conversation name; the second is
         // the message preview. Skip rows where this structure is not present.
         if (texts.length < 2) continue;
+        const sender = Array.from(texts[0].textContent.replace(/\s+/g, ' ').trim()).slice(0, 80).join('');
         const preview = texts[1];
         const previewText = preview.textContent.replace(/\s+/g, ' ').trim();
         const previewHash = fingerprint(previewText);
@@ -137,26 +148,53 @@ function getConversationSnapshot() {
         // Always recheck visible rows, including previously read conversations.
         const weight = window.getComputedStyle(preview).fontWeight;
         const boldPreview = weight === 'bold' || weight === 'bolder' || parseInt(weight, 10) >= 600;
-        const unreadDot = !boldPreview && hasUnreadDot(row);
         const unread = boldPreview || unreadDot;
+        visibleUnread ||= unread;
         threads.set(match[1], {
+            sender,
             preview: previewHash,
             previewText: Array.from(previewText).slice(0, 160).join(''),
             unread,
-            unreadSource: boldPreview ? 'preview-weight' : (unreadDot ? 'blue-dot' : 'none')
+            unreadSource: unreadDot ? 'blue-dot' : (boldPreview ? 'preview-weight' : 'none')
         });
     }
-    return threads;
+    return { threads, available, hasBlueDot, visibleUnread };
 }
 
 let knownThreads = new Map();
 let conversationBaselineReady = false;
 let lastConversationAvailable = null;
 let visibleUnread = false;
+let lastBlueDotState;
+let zeroBlueDotSince = null;
+let refreshBlueDotState = false;
 let refreshReadStates = false;
+
+function updateBlueDotSignal({ available, hasBlueDot }) {
+    let state = null;
+    // An unloaded/hidden list is unknown. It cannot complete a pending clear.
+    if (!available) {
+        zeroBlueDotSince = null;
+    } else if (hasBlueDot) {
+        zeroBlueDotSince = null;
+        state = true;
+    } else {
+        if (zeroBlueDotSince === null) zeroBlueDotSince = Date.now();
+        if (Date.now() - zeroBlueDotSince < 1500) return;
+        state = false;
+    }
+    if (state !== lastBlueDotState || refreshBlueDotState) {
+        lastBlueDotState = state;
+        refreshBlueDotState = false;
+        ipcRenderer.send('messenger-blue-dot-state', state);
+    }
+}
+
 function updateConversationSignals() {
-    const current = getConversationSnapshot();
-    visibleUnread = [...current.values()].some(state => state.unread);
+    const snapshot = getConversationSnapshot();
+    const current = snapshot.threads;
+    visibleUnread = snapshot.visibleUnread;
+    updateBlueDotSignal(snapshot);
     if ((current.size > 0) !== lastConversationAvailable) {
         lastConversationAvailable = current.size > 0;
         console.info(`[Messenger notification] Conversation rows ${lastConversationAvailable ? 'detected' : 'unavailable'}`);
@@ -177,6 +215,7 @@ function updateConversationSignals() {
                 ipcRenderer.send('messenger-conversation-change', {
                     thread: fingerprint(id),
                     message: fingerprint(`${id}:${state.preview}:${revision}`),
+                    sender: state.sender,
                     preview: state.previewText
                 });
                 pendingUntil = 0;
@@ -234,6 +273,7 @@ ipcRenderer.on('refresh-messenger-state', () => {
     lastSignal = undefined;
     lastCount = -1;
     refreshReadStates = true;
+    refreshBlueDotState = true;
     if (document.body) updateBadge();
 });
 
@@ -257,7 +297,7 @@ function setTopBarVisibility(hide) {
                     width: 0px !important;
                     height: 0px !important;
                 }
-                div[role="banner"], header[role="banner"], [role="banner"] {
+                [role="banner"] {
                     display: none !important;
                 }
             `;
