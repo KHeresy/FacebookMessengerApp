@@ -10,7 +10,7 @@ if (process.argv.includes('--disable-gpu')) {
 
 const windowStateKeeper = require('electron-window-state');
 const translations = require('./translations');
-const NOTIFICATION_COOLDOWN_MS = 1000;
+const NOTIFICATION_COOLDOWN_OPTIONS = [0, 500, 1000, 2000];
 const MAX_NOTIFICATION_PREVIEW_LENGTH = 500;
 
 if (process.platform === 'win32') {
@@ -19,6 +19,7 @@ if (process.platform === 'win32') {
 
 let notificationsEnabled = true;
 let showMessagePreviews = true;
+let notificationCooldownMs = 1000;
 const NOTIFICATION_MODES = { WEB: 'web', MESSENGER_ONLY: 'messenger-only' };
 let notificationMode = NOTIFICATION_MODES.MESSENGER_ONLY;
 let checkForUpdates = true;
@@ -53,6 +54,9 @@ function loadConfig() {
       if (typeof config.showMessagePreviews === 'boolean') {
         showMessagePreviews = config.showMessagePreviews;
       }
+      if (NOTIFICATION_COOLDOWN_OPTIONS.includes(config.notificationCooldownMs)) {
+        notificationCooldownMs = config.notificationCooldownMs;
+      }
       if (Object.values(NOTIFICATION_MODES).includes(config.notificationMode)) {
         notificationMode = config.notificationMode;
       }
@@ -64,7 +68,7 @@ function loadConfig() {
 
 function saveConfig() {
   try {
-    const config = { language: currentLang, checkForUpdates, ignoredVersion, hideTopBar, notificationsEnabled, showMessagePreviews, notificationMode };
+    const config = { language: currentLang, checkForUpdates, ignoredVersion, hideTopBar, notificationsEnabled, showMessagePreviews, notificationMode, notificationCooldownMs };
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
   } catch (e) {
     console.error('Failed to save config:', e);
@@ -429,6 +433,15 @@ if (!gotTheLock) {
               ]
             },
             {
+              label: t('notificationInterval'),
+              submenu: [
+                { label: t('notificationIntervalOff'), type: 'radio', checked: notificationCooldownMs === 0, click: () => setNotificationCooldown(0) },
+                { label: t('notificationIntervalHalfSecond'), type: 'radio', checked: notificationCooldownMs === 500, click: () => setNotificationCooldown(500) },
+                { label: t('notificationIntervalOneSecond'), type: 'radio', checked: notificationCooldownMs === 1000, click: () => setNotificationCooldown(1000) },
+                { label: t('notificationIntervalTwoSeconds'), type: 'radio', checked: notificationCooldownMs === 2000, click: () => setNotificationCooldown(2000) }
+              ]
+            },
+            {
               label: t('showMessagePreviews'),
               type: 'checkbox',
               checked: showMessagePreviews,
@@ -542,6 +555,12 @@ if (!gotTheLock) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.resetMessengerMonitoring();
     }
+  }
+
+  function setNotificationCooldown(cooldownMs) {
+    if (!NOTIFICATION_COOLDOWN_OPTIONS.includes(cooldownMs) || notificationCooldownMs === cooldownMs) return;
+    notificationCooldownMs = cooldownMs;
+    saveConfig();
   }
 
   function createWindow() {
@@ -778,7 +797,7 @@ if (!gotTheLock) {
       // Distinct arrivals during cooldown are delayed, not discarded. Weaker
       // signals still coalesce with the stronger pending conversation event.
       const minimumDelay = source === 'conversation' ? 0 : 1400;
-      const delay = Math.max(minimumDelay, lastNotifiedAt + NOTIFICATION_COOLDOWN_MS - now);
+      const delay = Math.max(minimumDelay, lastNotifiedAt + notificationCooldownMs - now);
       if (delay > minimumDelay) {
         console.info(`[Messenger notification] Delayed ${source}: toast cooldown`);
       }

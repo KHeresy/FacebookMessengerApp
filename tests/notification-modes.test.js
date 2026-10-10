@@ -281,6 +281,46 @@ test('the two modes are exclusive and persisted; web permissions follow the glob
   assert.equal(state.permissions.check(null, 'notifications', 'https://www.facebook.com'), false);
 });
 
+test('notification interval choices persist and control the minimum delay between toasts', async () => {
+  const choices = [
+    { label: '關閉', delay: 0 },
+    { label: '0.5 秒', delay: 500 },
+    { label: '1 秒', delay: 1000 },
+    { label: '2 秒', delay: 2000 }
+  ];
+
+  for (const choice of choices) {
+    const state = startApp();
+    await state.ready();
+    const interval = state.menu.find(item => item.label === '檢視').submenu
+      .find(item => item.label === '通知間隔');
+    const option = interval.submenu.find(item => item.label === choice.label);
+    assert.equal(option.type, 'radio');
+    assert.equal(option.checked, choice.delay === 1000);
+    if (choice.delay !== 1000) {
+      option.click();
+      assert.equal(state.savedConfigs.at(-1).notificationCooldownMs, choice.delay);
+    }
+
+    state.tick(6000);
+    state.conversationChange('aabbccdd', undefined, '00000001', 'First');
+    state.advance(0);
+    assert.equal(state.notifications.length, 1);
+    state.advance(100);
+    state.conversationChange('aabbccdd', undefined, '00000002', 'Second');
+
+    if (choice.delay === 0) {
+      state.advance(0);
+      assert.equal(state.notifications.length, 2);
+    } else {
+      state.advance(choice.delay - 101);
+      assert.equal(state.notifications.length, 1);
+      state.advance(1);
+      assert.equal(state.notifications.length, 2);
+    }
+  }
+});
+
 test('Messenger-only mode ignores existing unread counts, groups increases, and cancels stale alerts', async () => {
   const state = startApp();
   await state.ready();

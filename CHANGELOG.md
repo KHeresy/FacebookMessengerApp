@@ -12,6 +12,8 @@ Note: If only the date suffix at the end of the version changes (e.g., v1.3.0.YY
 - improve: Send the first conversation notification immediately and reduce the cooldown between later notifications to one second
 - improve: Combine available message previews when multiple conversation notifications are grouped
 - improve: Use the sender or conversation name as the notification title when available
+- improve: Add configurable notification intervals: off, 0.5, 1 or 2 seconds
+- test: Verify persistence and scheduling for each notification interval
 - refactor: Centralize main-frame IPC validation and remove redundant selectors
 - test: Expand notification coverage to 47 cases for blue-dot monitoring, dismissal, unavailable lists and IPC validation
 - test: Verify page-title changes do not trigger Messenger notifications
