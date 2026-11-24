@@ -80,3 +80,7 @@ npm run build -- --mac
     ```
     *(若您的安裝路徑不同，請自行調整)*
 3.  現在您應該可以順利開啟應用程式了。
+
+#### Homebrew custom tap
+
+也可以建立自己的 Homebrew Tap 來安裝與更新。cask 的 `postflight_steps` 會在安裝或升級後自動執行 `xattr -cr`，不需要再手動解除 Gatekeeper 隔離。詳細步驟請見 [README-macos-brew-tw.md](README-macos-brew-tw.md)。
