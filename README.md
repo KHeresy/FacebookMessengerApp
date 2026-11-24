@@ -80,3 +80,7 @@ Since this application is not signed with an Apple Developer Certificate, macOS 
     ```
     *(Adjust the path if you installed it elsewhere)*
 3.  You should now be able to open the app.
+
+#### Homebrew custom tap
+
+You can also install and update the app through your own Homebrew tap. The cask's `postflight_steps` runs `xattr -cr` automatically after every install or upgrade, so you don't need to clear the Gatekeeper quarantine by hand. See [README-macos-brew.md](README-macos-brew.md) for the full steps.
